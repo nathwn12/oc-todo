@@ -59,6 +59,48 @@ describe("applyMutation", () => {
     expect(state.todos).toHaveLength(0)
     expect(summary).toContain("Cleared 1")
   })
+
+  test("write replaces the whole list (V1 todowrite parity)", () => {
+    const first = applyMutation(empty, { action: "add", content: "old" }).state
+    const { state, summary } = applyMutation(first, {
+      action: "write",
+      todos: [
+        { content: "one", status: "in_progress", priority: "high" },
+        { content: "two" },
+      ],
+    })
+    expect(state.todos.map((t) => t.content)).toEqual(["one", "two"])
+    expect(state.todos[0]).toMatchObject({ status: "in_progress", priority: "high" })
+    expect(state.todos[1]).toMatchObject({ status: "pending", priority: "medium" })
+    expect(summary).toContain("Wrote 2")
+  })
+
+  test("write keeps an existing item's id and createdAt", () => {
+    const added = applyMutation(empty, { action: "add", content: "keep me" }).state
+    const existing = added.todos[0]
+    const { state } = applyMutation(added, {
+      action: "write",
+      todos: [{ id: existing.id, content: "keep me", status: "completed" }],
+    })
+    expect(state.todos[0].id).toBe(existing.id)
+    expect(state.todos[0].createdAt).toBe(existing.createdAt)
+    expect(state.todos[0].status).toBe("completed")
+  })
+
+  test("write drops blank entries and defaults unknown status/priority", () => {
+    const { state } = applyMutation(empty, {
+      action: "write",
+      todos: [{ content: "  " }, { content: "ok", status: "bogus", priority: "bogus" }],
+    })
+    expect(state.todos).toHaveLength(1)
+    expect(state.todos[0]).toMatchObject({ content: "ok", status: "pending", priority: "medium" })
+  })
+
+  test("write with an empty array clears the list", () => {
+    const added = applyMutation(empty, { action: "add", content: "a" }).state
+    const { state } = applyMutation(added, { action: "write", todos: [] })
+    expect(state.todos).toHaveLength(0)
+  })
 })
 
 describe("format", () => {

@@ -78,11 +78,12 @@ async function writeState(
 export function applyMutation(
   state: TodoListState,
   input: {
-    action: "add" | "update" | "complete" | "clear"
+    action: "add" | "update" | "complete" | "clear" | "write"
     id?: string
     content?: string
     status?: string
     priority?: string
+    todos?: ReadonlyArray<{ id?: string; content?: string; status?: string; priority?: string }>
   },
 ): { state: TodoListState; summary: string } {
   const now = Date.now()
@@ -93,6 +94,35 @@ export function applyMutation(
   switch (input.action) {
     case "clear":
       return { state: { version: 1, todos: [] }, summary: `Cleared ${todos.length} todo(s)` }
+
+    // V1 `todowrite` parity: the caller supplies the whole list and it replaces
+    // the previous one. Existing ids are kept, new items get fresh ids, and
+    // items with blank content are dropped. Timestamps are preserved per item.
+    case "write": {
+      const previous = new Map(state.todos.map((todo) => [todo.id, todo]))
+      const next: TodoItem[] = []
+      for (const [index, entry] of (input.todos ?? []).entries()) {
+        const content = (entry.content ?? "").trim()
+        if (!content) continue
+        const status = (STATUSES as readonly string[]).includes(entry.status ?? "")
+          ? (entry.status as TodoItem["status"])
+          : "pending"
+        const priority = (PRIORITIES as readonly string[]).includes(entry.priority ?? "")
+          ? (entry.priority as TodoItem["priority"])
+          : "medium"
+        const id = entry.id ?? `${now.toString(36)}${(index + 1).toString(36)}`
+        const prior = entry.id ? previous.get(entry.id) : undefined
+        next.push({
+          id,
+          content,
+          status,
+          priority,
+          createdAt: prior?.createdAt ?? now,
+          updatedAt: now,
+        })
+      }
+      return { state: { version: 1, todos: next }, summary: `Wrote ${next.length} todo(s)` }
+    }
 
     case "add": {
       const content = (input.content ?? "").trim()
@@ -175,16 +205,33 @@ export default {
         name: "todo",
         description:
           "Manage the current session's todo list. Read back the real stored list for this session with action 'list'. " +
-          "Mutations: 'add' (content [status] [priority]), 'update' (id [content] [status] [priority]), " +
-          "'complete' (id), 'clear' (wipes the list). Statuses: pending, in_progress, completed, cancelled. " +
-          "Priorities: high, medium, low. The list persists per session across turns.",
+          "Mutations: 'write' (V1 todowrite parity: replace the whole list from `todos`), 'add' (content [status] [priority]), " +
+          "'update' (id [content] [status] [priority]), 'complete' (id), 'clear' (wipes the list). " +
+          "Statuses: pending, in_progress, completed, cancelled. Priorities: high, medium, low. " +
+          "The list persists per session across turns and is not auto-pruned.",
         input: {
           type: "object",
           properties: {
             action: {
               type: "string",
-              enum: ["list", "add", "update", "complete", "clear"],
+              enum: ["list", "add", "update", "complete", "clear", "write"],
               description: "What to do with the session todo list.",
+            },
+            todos: {
+              type: "array",
+              description:
+                "Full replacement list for action 'write' (V1 todowrite parity). Each item needs content; " +
+                "id/status/priority are optional (id keeps an existing item's identity and createdAt).",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  content: { type: "string" },
+                  status: { type: "string", enum: ["pending", "in_progress", "completed", "cancelled"] },
+                  priority: { type: "string", enum: ["high", "medium", "low"] },
+                },
+                required: ["content"],
+              },
             },
             id: {
               type: "string",
@@ -208,11 +255,12 @@ export default {
         options: { codemode: true },
         async execute(input: any, context: any) {
           const request = input as {
-            action: "list" | "add" | "update" | "complete" | "clear"
+            action: "list" | "add" | "update" | "complete" | "clear" | "write"
             id?: string
             content?: string
             status?: string
             priority?: string
+            todos?: ReadonlyArray<{ id?: string; content?: string; status?: string; priority?: string }>
           }
           // Session scope comes from the tool call context, not from the caller.
           const sessionID = String(context.sessionID)

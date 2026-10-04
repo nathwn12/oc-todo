@@ -5,13 +5,29 @@ plugin storage** (not a decorative widget).
 
 ## What it is
 
-- **`todo` tool** (server plugin): `list`, `add`, `update`, `complete`, and
-  `clear`. Every mutation writes the session's list to plugin storage; every read
-  returns exactly what is stored. The list is keyed by session id, so it is
-  scoped to the calling session and survives across turns and restarts.
+- **`todo` tool** (server plugin): `list`, `write` (V1 `todowrite` parity — the
+  caller supplies the whole list and it replaces the previous one), `add`,
+  `update`, `complete`, and `clear`. Every mutation writes the session's list to
+  plugin storage; every read returns exactly what is stored. The list is keyed by
+  session id, so it is scoped to the calling session and survives across turns
+  and restarts.
 - **`todo.list` RPC**: a read-only contract shared with the CLI side.
 - **`tui.tsx` CLI plugin**: a read-only checklist renderer in the sidebar over the
   stored state (via RPC). Refreshes on `rpc.todo.changed`, with a slow poll fallback.
+
+## Rendering rules (decided)
+
+Storage never auto-prunes: items only change when the caller mutates them
+(`write` replace, `clear`, or per-item `add`/`update`/`complete`). The TUI is
+what keeps the surface quiet:
+
+- **No todos** → render nothing.
+- **Any pending/in_progress** → full checklist; completed/cancelled lines are muted.
+- **All completed/cancelled** (nothing active) → collapse to one muted line,
+  `✓ Todos <closed>/<total>`, so finished work leaves closure without a stale list.
+
+Use `write` to rewrite the whole list each time (V1 style) rather than appending
+forever; `add` remains for genuinely incremental updates.
 
 ## Layout
 

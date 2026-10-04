@@ -59,27 +59,42 @@ export default Plugin.define({
           sessionID = id
           void refresh(id)
         }
-        const done = () => todos().filter((t) => t.status === "completed").length
+        const total = () => todos().length
+        // "Active" means work still to do. Cancelled is a terminal state, like completed.
+        const active = () => todos().filter((t) => t.status !== "completed" && t.status !== "cancelled")
+        const closed = () => total() - active().length
         return (
-          <Show when={todos().length > 0}>
+          <Show when={total() > 0}>
             <box flexDirection="column">
-              <text fg={context.theme.text.base}>
-                <b>Todos</b>{" "}
-                <span style={{ fg: context.theme.text.muted }}>
-                  {done()}/{todos().length}
-                </span>
-              </text>
-              <For each={todos()}>
-                {(todo) => (
-                  <text
-                    fg={todo.status === "completed" ? context.theme.text.muted : context.theme.text.base}
-                    wrapMode="none"
-                    truncate
-                  >
-                    {`[${STATUS_DOT[todo.status] ?? "-"}] ${todo.content}`}
-                  </text>
-                )}
-              </For>
+              <Show
+                when={active().length > 0}
+                fallback={
+                  // Everything is closed: keep one line of closure, not a stale list.
+                  <text fg={context.theme.text.muted}>{`\u2713 Todos ${closed()}/${total()}`}</text>
+                }
+              >
+                <text fg={context.theme.text.base}>
+                  <b>Todos</b>{" "}
+                  <span style={{ fg: context.theme.text.muted }}>
+                    {closed()}/{total()}
+                  </span>
+                </text>
+                <For each={todos()}>
+                  {(todo) => (
+                    <text
+                      fg={
+                        todo.status === "completed" || todo.status === "cancelled"
+                          ? context.theme.text.muted
+                          : context.theme.text.base
+                      }
+                      wrapMode="none"
+                      truncate
+                    >
+                      {`[${STATUS_DOT[todo.status] ?? "-"}] ${todo.content}`}
+                    </text>
+                  )}
+                </For>
+              </Show>
             </box>
           </Show>
         )
