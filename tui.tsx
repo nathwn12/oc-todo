@@ -29,6 +29,9 @@ export default Plugin.define({
   setup(context) {
     const client = context.client
     const [todos, setTodos] = createSignal<TodoItem[]>([])
+    // undefined = auto (expand while work remains, collapse when all closed);
+    // a click sets true/false and that preference wins for this session.
+    const [manual, setManual] = createSignal<boolean | undefined>(undefined)
     let sessionID: string | undefined
 
     const refresh = async (id: string) => {
@@ -57,28 +60,29 @@ export default Plugin.define({
       render: ({ sessionID: id }) => {
         if (id !== sessionID) {
           sessionID = id
+          setManual(undefined)
           void refresh(id)
         }
         const total = () => todos().length
         // "Active" means work still to do. Cancelled is a terminal state, like completed.
         const active = () => todos().filter((t) => t.status !== "completed" && t.status !== "cancelled")
         const closed = () => total() - active().length
+        const expanded = () => manual() ?? active().length > 0
         return (
           <Show when={total() > 0}>
             <box flexDirection="column">
-              <Show
-                when={active().length > 0}
-                fallback={
-                  // Everything is closed: keep one line of closure, not a stale list.
-                  <text fg={context.theme.text.muted}>{`\u2713 Todos ${closed()}/${total()}`}</text>
-                }
-              >
+              {/* The header is the click target; it stays visible in both states. */}
+              <box flexDirection="row" gap={1} onMouseUp={() => setManual(!expanded())}>
+                <text fg={context.theme.text.muted}>{expanded() ? "\u25bc" : "\u25b6"}</text>
                 <text fg={context.theme.text.base}>
+                  {active().length === 0 ? "\u2713 " : ""}
                   <b>Todos</b>{" "}
                   <span style={{ fg: context.theme.text.muted }}>
                     {closed()}/{total()}
                   </span>
                 </text>
+              </box>
+              <Show when={expanded()}>
                 <For each={todos()}>
                   {(todo) => (
                     <text

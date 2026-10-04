@@ -63,6 +63,9 @@ Rendering rules — **decided, not configurable**:
 - **Any pending / in_progress** → the full checklist; closed lines are muted.
 - **All completed / cancelled** → collapses to one muted line, `✓ Todos n/n`, so
   finished work leaves closure without leaving a stale list.
+- **Click the header to toggle** (▾/▸) — a manual choice wins for that session.
+  The removed V1 sidebar had the same toggle; this one works at any list length,
+  not only above two items.
 
 Storage never auto-prunes. Items change only when the caller mutates them
 (`write`, `clear`, or a per-item action). The render rules are what keep the
