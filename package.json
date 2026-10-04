@@ -1,0 +1,21 @@
+{
+  "name": "oc-todo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "V1-style per-session todo/checklist for OpenCode V2, backed by real plugin storage.",
+  "exports": {
+    ".": {
+      "types": "./index.ts",
+      "import": "./index.ts"
+    },
+    "./tui": {
+      "types": "./tui.tsx",
+      "import": "./tui.tsx"
+    },
+    "./contract": {
+      "types": "./contract.ts",
+      "import": "./contract.ts"
+    }
+  }
+}
