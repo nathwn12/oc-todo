@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.1
+
+- Post-release review pass. No behaviour change for normal use.
+- An ambiguous id prefix is refused with a reason instead of silently editing
+  the first match; an exact id now always wins over a prefix match.
+- Per-session serial queue around read → mutate → write, so concurrent
+  code-mode calls cannot drop a mutation.
+- Sidebar: a stale failed refresh can no longer blank the session you moved to.
+- `package.json` declares `@opencode/plugin` and the OpenTUI/solid-js peers.
+- Hardening: malformed stored rows are repaired instead of rejecting the list;
+  non-string content can no longer throw or corrupt state; `write` de-duplicates
+  a repeated id; no-op mutations no longer rewrite storage or emit `changed`.
+- Tests: 15 → 28.
+
 ## 0.1.0
 
 - Initial release.
