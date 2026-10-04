@@ -181,6 +181,55 @@ describe("input hardening", () => {
     expect(state.todos[0].updatedAt).toBe(before)
   })
 
+  test("update that re-supplies the same status is a no-op", () => {
+    const added = applyMutation(empty, { action: "add", content: "a", status: "pending" }).state
+    const before = added.todos[0].updatedAt
+    const { state, summary } = applyMutation(added, {
+      action: "update",
+      id: added.todos[0].id,
+      status: "pending",
+    })
+    expect(summary).toContain("nothing to change")
+    expect(state.todos[0].updatedAt).toBe(before)
+  })
+
+  test("update that re-supplies the same priority is a no-op", () => {
+    const added = applyMutation(empty, { action: "add", content: "a", priority: "medium" }).state
+    const before = added.todos[0].updatedAt
+    const { summary, state } = applyMutation(added, {
+      action: "update",
+      id: added.todos[0].id,
+      priority: "medium",
+    })
+    expect(summary).toContain("nothing to change")
+    expect(state.todos[0].updatedAt).toBe(before)
+  })
+
+  test("update that re-supplies the same content is a no-op", () => {
+    const added = applyMutation(empty, { action: "add", content: "a" }).state
+    const before = added.todos[0].updatedAt
+    const { summary, state } = applyMutation(added, {
+      action: "update",
+      id: added.todos[0].id,
+      content: "a",
+    })
+    expect(summary).toContain("nothing to change")
+    expect(state.todos[0].updatedAt).toBe(before)
+  })
+
+  test("update still reports a change when one field genuinely differs", () => {
+    const added = applyMutation(empty, { action: "add", content: "a", status: "pending", priority: "medium" }).state
+    const { summary, state } = applyMutation(added, {
+      action: "update",
+      id: added.todos[0].id,
+      status: "pending",
+      priority: "high",
+    })
+    expect(summary).toContain("Updated")
+    expect(state.todos[0].priority).toBe("high")
+    expect(state.todos[0].status).toBe("pending")
+  })
+
   test("write de-duplicates a repeated id", () => {
     const { state } = applyMutation(empty, {
       action: "write",

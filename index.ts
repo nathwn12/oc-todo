@@ -175,14 +175,16 @@ export function applyMutation(
       let changed = false
       if (input.content !== undefined) {
         if (typeof input.content !== "string") return { state, summary: "update: content must be a string" }
-        todo.content = input.content
-        changed = true
+        if (input.content !== todo.content) {
+          todo.content = input.content
+          changed = true
+        }
       }
-      if (input.status !== undefined && isStatus(input.status)) {
+      if (input.status !== undefined && isStatus(input.status) && input.status !== todo.status) {
         todo.status = input.status
         changed = true
       }
-      if (input.priority !== undefined && isPriority(input.priority)) {
+      if (input.priority !== undefined && isPriority(input.priority) && input.priority !== todo.priority) {
         todo.priority = input.priority
         changed = true
       }
