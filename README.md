@@ -1,68 +1,80 @@
-# oc-todo (OpenCode V2 plugin)
+<div align="center">
 
-Restores a V1-style per-session todo/checklist to OpenCode V2, backed by **real
-plugin storage** (not a decorative widget).
+# ✅ oc-todo
 
-## What it is
+**Per-session todo lists for your OpenCode terminal.**
+*Real plugin storage — not a decorative widget.*
 
-- **`todo` tool** (server plugin): `list`, `write` (V1 `todowrite` parity — the
-  caller supplies the whole list and it replaces the previous one), `add`,
-  `update`, `complete`, and `clear`. Every mutation writes the session's list to
-  plugin storage; every read returns exactly what is stored. The list is keyed by
-  session id, so it is scoped to the calling session and survives across turns
-  and restarts.
-- **`todo.list` RPC**: a read-only contract shared with the CLI side.
-- **`tui.tsx` CLI plugin**: a read-only checklist renderer in the sidebar over the
-  stored state (via RPC). Refreshes on `rpc.todo.changed`, with a slow poll fallback.
+![npm](https://img.shields.io/npm/v/oc-todo) ![license](https://img.shields.io/badge/license-MIT-blue) ![node](https://img.shields.io/badge/node-%E2%89%A522-green) ![downloads](https://img.shields.io/npm/dm/oc-todo) ![check](https://github.com/nathwn12/oc-todo/actions/workflows/check.yml/badge.svg)
 
-## Rendering rules (decided)
+</div>
 
-Storage never auto-prunes: items only change when the caller mutates them
-(`write` replace, `clear`, or per-item `add`/`update`/`complete`). The TUI is
-what keeps the surface quiet:
+---
 
-- **No todos** → render nothing.
-- **Any pending/in_progress** → full checklist; completed/cancelled lines are muted.
-- **All completed/cancelled** (nothing active) → collapse to one muted line,
-  `✓ Todos <closed>/<total>`, so finished work leaves closure without a stale list.
+## 🚀 Quick start
 
-Use `write` to rewrite the whole list each time (V1 style) rather than appending
-forever; `add` remains for genuinely incremental updates.
+Add the plugin to your `opencode.jsonc`:
 
-## Layout
-
-A local directory plugin is resolved by **filename at the plugin root** — the
-`package.json` `exports` map is only consulted for installed (named) packages,
-so the entries must sit at the root:
-
-```
-index.ts         server plugin: the `todo` tool + the RPC implementation
-tui.tsx          CLI plugin: sidebar checklist renderer
-contract.ts      shared RPC contract (plain JSON Schema, no bare imports)
-package.json     exports "." -> index.ts, "./tui" -> tui.tsx
+```jsonc
+// opencode.jsonc
+{ "plugins": ["oc-todo"] }
 ```
 
-Both entrypoints are deliberately dependency-free at load time. On the stock
-binary the server runtime does not resolve the bare `@opencode/plugin` specifier
-for a local directory plugin, so `index.ts` exports a plain `{ id, setup }`
-definition (`Plugin.define` is an identity helper) and the shared contract is a
-plain object (`Rpc.define` is an identity helper). The TUI entry keeps
-`@opencode/plugin/tui`, which the TUI runtime does inject.
+Restart OpenCode. **That's the whole setup** — no config file, no options. The
+`todo` tool is available to the agent immediately, and the checklist appears in
+the sidebar beside an open session whenever that session has todos.
 
-## Load
+---
 
-Auto-discovered as a directory under a config root's `plugin/`/`plugins/` folder
-(one level, non-recursive). The server side loads from `index.ts`; the TUI side
-loads from `tui.tsx`. It can also be listed directly:
+## 🧰 The `todo` tool
 
-- `cli.json` `plugins` wires the **TUI** entry (`"./plugins/oc-todo"`).
-- `opencode.jsonc` `plugins` wires the **server** entry (or rely on the
-  `plugins/` directory auto-discovery).
+The list is **real, per-session state**: every mutation is written to plugin
+storage under a session-scoped key, and every read returns exactly what is
+stored. Nothing here is ephemeral UI text.
 
-There is no recursive directory scan in V2; a `"directory"` config key has no
-effect. Only direct children of `plugins/` are discovered.
+| Action | Arguments | What it does |
+|---|---|---|
+| `list` | — | Read back the stored list for this session |
+| `write` | `todos[]` | **V1 `todowrite` parity** — replace the whole list |
+| `add` | `content` `[status]` `[priority]` | Append one item |
+| `update` | `id` `[content]` `[status]` `[priority]` | Change one item by id (exact or unambiguous prefix) |
+| `complete` | `id` | Mark one item completed |
+| `clear` | — | Wipe the list |
 
-## Wire format
+`status`: `pending` · `in_progress` · `completed` · `cancelled`
+`priority`: `high` · `medium` · `low`
+
+A `write` item may carry an `id`; when it does, the existing item keeps its
+identity and `createdAt`, so a rewrite is a true edit rather than a new list.
+Blank items are dropped and unknown status/priority fall back to
+`pending`/`medium`.
+
+---
+
+## 📋 The sidebar checklist
+
+`tui.tsx` renders the stored list read-only in the `sidebar.content` slot. It
+refreshes on `rpc.todo.changed` and falls back to a slow poll, so it also works
+against a remote server whose events this TUI is not subscribed to.
+
+Rendering rules — **decided, not configurable**:
+
+- **No todos** → nothing renders.
+- **Any pending / in_progress** → the full checklist; closed lines are muted.
+- **All completed / cancelled** → collapses to one muted line, `✓ Todos n/n`, so
+  finished work leaves closure without leaving a stale list.
+
+Storage never auto-prunes. Items change only when the caller mutates them
+(`write`, `clear`, or a per-item action). The render rules are what keep the
+surface quiet — the data keeps the history.
+
+---
+
+## 💾 Storage
+
+Plugin storage under `todos/session/<sessionID>`, durable in the host's SQLite
+store. The list is keyed by session id, so it is scoped to the calling session
+and survives across turns and server restarts.
 
 ```jsonc
 { "version": 1, "todos": [
@@ -71,9 +83,36 @@ effect. Only direct children of `plugins/` are discovered.
 ] }
 ```
 
-`status`: `pending` | `in_progress` | `completed` | `cancelled`
-`priority`: `high` | `medium` | `low`
+---
 
-## Storage
+## 🧩 Layout
 
-Plugin storage under `todos/session/<sessionID>` (in `~/.local/share/opencode`).
+A local directory plugin is resolved by **filename at the plugin root** — the
+`package.json` `exports` map is only consulted for installed (named) packages —
+so the entries sit at the root:
+
+```
+index.ts         server plugin: the `todo` tool + the RPC implementation
+tui.tsx          CLI plugin: sidebar checklist renderer
+contract.ts      shared RPC contract (plain JSON Schema, no bare imports)
+```
+
+- **As a package** (`"plugins": ["oc-todo"]`): `exports["."]` → `index.ts`,
+  `exports["./tui"]` → `tui.tsx`.
+- **As a local directory** (`"plugins": ["./plugins/oc-todo"]`): the same files
+  at the directory root.
+
+---
+
+## ⚠️ V2 note
+
+Both entrypoints are deliberately dependency-free at load time. On the stock
+binary the server runtime does not resolve the bare `@opencode/plugin` specifier
+for a local directory plugin, so `index.ts` exports a plain `{ id, setup }`
+definition (`Plugin.define` is an identity helper) and the shared contract is a
+plain object (`Rpc.define` is an identity helper). The TUI entry keeps
+`@opencode/plugin/tui`, which the TUI runtime does inject.
+
+## License
+
+[MIT](LICENSE) © 2026 nathwn12
