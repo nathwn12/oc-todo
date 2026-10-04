@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2
+
+- A no-op `update` is now correctly reported. Re-supplying a todo's current
+  content, status, or priority is reported as `nothing to change` and no longer
+  bumps `updatedAt`; a field that genuinely differs still updates.
+- Tests: 28 -> 32.
+
 ## 0.1.1
 
 - Post-release review pass. No behaviour change for normal use.
