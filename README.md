@@ -109,12 +109,13 @@ contract.ts      shared RPC contract (plain JSON Schema, no bare imports)
 
 ## ⚠️ V2 note
 
-Both entrypoints are deliberately dependency-free at load time. On the stock
-binary the server runtime does not resolve the bare `@opencode/plugin` specifier
-for a local directory plugin, so `index.ts` exports a plain `{ id, setup }`
-definition (`Plugin.define` is an identity helper) and the shared contract is a
-plain object (`Rpc.define` is an identity helper). The TUI entry keeps
-`@opencode/plugin/tui`, which the TUI runtime does inject.
+Both entrypoints are deliberately dependency-free at load time: `index.ts`
+exports a plain `{ id, setup }` definition and the shared contract is a plain
+object. That is always valid — `Plugin.define` and `Rpc.define` are identity
+helpers — and it also keeps the plugin loadable where the bare
+`@opencode/plugin` specifier is not resolvable from a local directory plugin
+(observed on the stock 2.0.22 binary, 2026-10). The TUI entry keeps
+`@opencode/plugin/tui`, which the TUI runtime injects.
 
 ## License
 

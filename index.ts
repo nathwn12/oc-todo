@@ -9,9 +9,10 @@
 //   - this server plugin's `todo.list` RPC, so external clients can read it
 //   - the `tui.tsx` CLI plugin, a read-only checklist renderer over the RPC
 //
-// `Plugin.define` is an identity helper, and the stock server runtime does not
-// resolve the bare `@opencode/plugin` specifier for local directory plugins, so
-// the plugin is exported as a plain `{ id, setup }` definition instead.
+// `Plugin.define` is an identity helper, so the plugin is exported as a plain
+// `{ id, setup }` definition. That keeps the server entry loadable even where
+// the bare `@opencode/plugin` specifier is not resolvable (observed on the
+// stock 2.0.22 binary for local directory plugins).
 //
 // Wire format, all JSON-serializable:
 //   { version: 1, todos: [{ id, content, status, priority, createdAt, updatedAt }] }
@@ -39,6 +40,11 @@ interface TodoListState {
 const STATUSES = ["pending", "in_progress", "completed", "cancelled"] as const
 const PRIORITIES = ["high", "medium", "low"] as const
 
+const isStatus = (value: unknown): value is TodoItem["status"] =>
+  (STATUSES as readonly unknown[]).includes(value)
+const isPriority = (value: unknown): value is TodoItem["priority"] =>
+  (PRIORITIES as readonly unknown[]).includes(value)
+
 // Storage keys are global to the plugin, so the session is folded into the key.
 // This is what makes the list session-scoped and durable across server restarts.
 const keyOf = (sessionID: string) => `todos/session/${sessionID}`
@@ -47,15 +53,30 @@ function emptyState(): TodoListState {
   return { version: 1, todos: [] }
 }
 
-function coerce(raw: unknown): TodoListState {
+/**
+ * Read stored state defensively: a hand-edited or partially-written row must
+ * never make `todo.list` violate its output contract (that would reject the
+ * whole call and blank the TUI). Every field is repaired to a valid value.
+ */
+export function coerce(raw: unknown): TodoListState {
   if (!raw || typeof raw !== "object") return emptyState()
   const value = raw as Partial<TodoListState>
-  const todos = Array.isArray(value.todos)
-    ? value.todos.filter(
-        (item): item is TodoItem =>
-          !!item && typeof item === "object" && typeof (item as TodoItem).id === "string",
-      )
-    : []
+  const todos: TodoItem[] = []
+  if (Array.isArray(value.todos)) {
+    for (const item of value.todos) {
+      if (!item || typeof item !== "object") continue
+      const todo = item as Partial<TodoItem>
+      if (typeof todo.id !== "string") continue
+      todos.push({
+        id: todo.id,
+        content: typeof todo.content === "string" ? todo.content : "",
+        status: isStatus(todo.status) ? todo.status : "pending",
+        priority: isPriority(todo.priority) ? todo.priority : "medium",
+        createdAt: typeof todo.createdAt === "number" ? todo.createdAt : 0,
+        updatedAt: typeof todo.updatedAt === "number" ? todo.updatedAt : 0,
+      })
+    }
+  }
   return { version: 1, todos }
 }
 
@@ -74,6 +95,20 @@ async function writeState(
   await store.set(keyOf(sessionID), state as never)
 }
 
+/**
+ * Resolve a todo by exact id, then by a unique prefix. An ambiguous prefix is
+ * an error, never a silent pick of the first match.
+ */
+export function findTodo(todos: TodoItem[], id: string | undefined): { index: number; error?: string } {
+  if (!id) return { index: -1, error: "no id given" }
+  const exact = todos.findIndex((todo) => todo.id === id)
+  if (exact >= 0) return { index: exact }
+  const matches = todos.flatMap((todo, index) => (todo.id.startsWith(id) ? [index] : []))
+  if (matches.length === 0) return { index: -1, error: `no todo matching id "${id}"` }
+  if (matches.length > 1) return { index: -1, error: `ambiguous id "${id}" matches ${matches.length} todos` }
+  return { index: matches[0] }
+}
+
 /** Apply one mutation, purely, to an immutable state and return the next state. */
 export function applyMutation(
   state: TodoListState,
@@ -88,80 +123,79 @@ export function applyMutation(
 ): { state: TodoListState; summary: string } {
   const now = Date.now()
   const todos = state.todos.map((todo) => ({ ...todo }))
-  const byId = (id: string | undefined) =>
-    id ? todos.findIndex((todo) => todo.id === id || todo.id.startsWith(id)) : -1
 
   switch (input.action) {
     case "clear":
+      if (todos.length === 0) return { state, summary: "List is already empty" }
       return { state: { version: 1, todos: [] }, summary: `Cleared ${todos.length} todo(s)` }
 
     // V1 `todowrite` parity: the caller supplies the whole list and it replaces
-    // the previous one. Existing ids are kept, new items get fresh ids, and
-    // items with blank content are dropped. Timestamps are preserved per item.
+    // the previous one. Existing ids are kept, new items get fresh ids, blank
+    // items are dropped, and a repeated id within one write is de-duplicated.
     case "write": {
       const previous = new Map(state.todos.map((todo) => [todo.id, todo]))
+      const used = new Set<string>()
       const next: TodoItem[] = []
       for (const [index, entry] of (input.todos ?? []).entries()) {
-        const content = (entry.content ?? "").trim()
+        if (!entry || typeof entry !== "object") continue
+        const content = typeof entry.content === "string" ? entry.content.trim() : ""
         if (!content) continue
-        const status = (STATUSES as readonly string[]).includes(entry.status ?? "")
-          ? (entry.status as TodoItem["status"])
-          : "pending"
-        const priority = (PRIORITIES as readonly string[]).includes(entry.priority ?? "")
-          ? (entry.priority as TodoItem["priority"])
-          : "medium"
-        const id = entry.id ?? `${now.toString(36)}${(index + 1).toString(36)}`
-        const prior = entry.id ? previous.get(entry.id) : undefined
-        next.push({
-          id,
-          content,
-          status,
-          priority,
-          createdAt: prior?.createdAt ?? now,
-          updatedAt: now,
-        })
+        const status = isStatus(entry.status) ? entry.status : "pending"
+        const priority = isPriority(entry.priority) ? entry.priority : "medium"
+        let id =
+          typeof entry.id === "string" && entry.id ? entry.id : `${now.toString(36)}${(index + 1).toString(36)}`
+        if (used.has(id)) id = `${now.toString(36)}${(index + 1).toString(36)}${next.length.toString(36)}`
+        used.add(id)
+        const prior = previous.get(id)
+        next.push({ id, content, status, priority, createdAt: prior?.createdAt ?? now, updatedAt: now })
       }
       return { state: { version: 1, todos: next }, summary: `Wrote ${next.length} todo(s)` }
     }
 
     case "add": {
-      const content = (input.content ?? "").trim()
+      const content = typeof input.content === "string" ? input.content.trim() : ""
       if (!content) return { state, summary: "add requires content" }
-      const status = (STATUSES as readonly string[]).includes(input.status ?? "")
-        ? (input.status as TodoItem["status"])
-        : "pending"
-      const priority = (PRIORITIES as readonly string[]).includes(input.priority ?? "")
-        ? (input.priority as TodoItem["priority"])
-        : "medium"
-      const item: TodoItem = {
+      const status = isStatus(input.status) ? input.status : "pending"
+      const priority = isPriority(input.priority) ? input.priority : "medium"
+      todos.push({
         id: `${now.toString(36)}${(todos.length + 1).toString(36)}`,
         content,
         status,
         priority,
         createdAt: now,
         updatedAt: now,
-      }
-      todos.push(item)
+      })
       return { state: { version: 1, todos }, summary: `Added "${content}" (${status}, ${priority})` }
     }
 
     case "update": {
-      const index = byId(input.id)
-      if (index < 0) return { state, summary: `update: no todo matching id "${input.id ?? ""}"` }
-      const todo = todos[index]
-      if (input.content !== undefined) todo.content = input.content
-      if (input.status !== undefined && (STATUSES as readonly string[]).includes(input.status))
-        todo.status = input.status as TodoItem["status"]
-      if (input.priority !== undefined && (PRIORITIES as readonly string[]).includes(input.priority))
-        todo.priority = input.priority as TodoItem["priority"]
+      const found = findTodo(todos, input.id)
+      if (found.index < 0) return { state, summary: `update: ${found.error}` }
+      const todo = todos[found.index]
+      let changed = false
+      if (input.content !== undefined) {
+        if (typeof input.content !== "string") return { state, summary: "update: content must be a string" }
+        todo.content = input.content
+        changed = true
+      }
+      if (input.status !== undefined && isStatus(input.status)) {
+        todo.status = input.status
+        changed = true
+      }
+      if (input.priority !== undefined && isPriority(input.priority)) {
+        todo.priority = input.priority
+        changed = true
+      }
+      if (!changed) return { state, summary: `update: nothing to change for "${todo.content}"` }
       todo.updatedAt = now
       return { state: { version: 1, todos }, summary: `Updated "${todo.content}" -> ${todo.status}` }
     }
 
     case "complete": {
-      const index = byId(input.id)
-      if (index < 0) return { state, summary: `complete: no todo matching id "${input.id ?? ""}"` }
-      const todo = todos[index]
+      const found = findTodo(todos, input.id)
+      if (found.index < 0) return { state, summary: `complete: ${found.error}` }
+      const todo = todos[found.index]
+      if (todo.status === "completed") return { state, summary: `"${todo.content}" is already completed` }
       todo.status = "completed"
       todo.updatedAt = now
       return { state: { version: 1, todos }, summary: `Completed "${todo.content}"` }
@@ -189,6 +223,20 @@ export default {
     const store = {
       get: (key: string) => ctx.storage.get(key),
       set: (key: string, value: unknown) => ctx.storage.set(key, value as never),
+    }
+
+    // Storage has no compare-and-swap, so read → mutate → write for one session
+    // must not interleave. Concurrent tool calls are normal (and code-mode makes
+    // them easy), so each session gets a serial queue.
+    const queues = new Map<string, Promise<unknown>>()
+    const serialize = <T>(sessionID: string, task: () => Promise<T>): Promise<T> => {
+      const previous = queues.get(sessionID) ?? Promise.resolve()
+      const next = previous.then(task, task)
+      queues.set(
+        sessionID,
+        next.catch(() => {}),
+      )
+      return next
     }
 
     const registration = await ctx.rpc.register(Todo, {
@@ -270,10 +318,16 @@ export default {
             return { content: `${format(state)}\n${state.todos.length} todo(s) for session ${sessionID}.` }
           }
 
-          const current = await readState(store, sessionID)
-          const { state, summary } = applyMutation(current, request)
-          await writeState(store, sessionID, state)
-          await registration.events.emit("changed", { sessionID })
+          const { state, summary } = await serialize(sessionID, async () => {
+            const current = await readState(store, sessionID)
+            const outcome = applyMutation(current, request)
+            // A no-op must not rewrite storage or fire a change event.
+            if (JSON.stringify(outcome.state) !== JSON.stringify(current)) {
+              await writeState(store, sessionID, outcome.state)
+              await registration.events.emit("changed", { sessionID })
+            }
+            return outcome
+          })
           return {
             content: `${summary}\n\n${format(state)}\n${state.todos.length} todo(s) for session ${sessionID}.`,
           }
@@ -282,6 +336,7 @@ export default {
     })
 
     return async () => {
+      queues.clear()
       await registration.dispose()
     }
   },

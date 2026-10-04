@@ -34,15 +34,19 @@ export default Plugin.define({
     const [manual, setManual] = createSignal<boolean | undefined>(undefined)
     let sessionID: string | undefined
 
+    // Monotonic request id: only the newest refresh may write the signal, so a
+    // slow response for an older session (or an older tick) can never win.
+    let requestSeq = 0
     const refresh = async (id: string) => {
+      const seq = ++requestSeq
       try {
         // `client.rpc` builds a typed subclient from the shared contract.
         const remote = client.rpc(Todo)
         const result = await remote.list({ sessionID: id })
-        // Ignore a late response for a session we have already navigated away from.
-        if (sessionID === id) setTodos(result.todos ?? [])
+        if (seq === requestSeq && sessionID === id) setTodos(result.todos ?? [])
       } catch {
-        setTodos([])
+        // A failed refresh must never blank a session we have since moved to.
+        if (seq === requestSeq && sessionID === id) setTodos([])
       }
     }
 
@@ -61,6 +65,7 @@ export default Plugin.define({
         if (id !== sessionID) {
           sessionID = id
           setManual(undefined)
+          setTodos([])
           void refresh(id)
         }
         const total = () => todos().length
