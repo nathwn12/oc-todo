@@ -195,9 +195,19 @@ export function applyMutation(
         if (!content) continue
         const status = isStatus(entry.status) ? entry.status : "pending"
         const priority = isPriority(entry.priority) ? entry.priority : "medium"
-        let id =
-          typeof entry.id === "string" && entry.id ? entry.id : `${now.toString(36)}${(index + 1).toString(36)}`
-        if (used.has(id)) id = `${now.toString(36)}${(index + 1).toString(36)}${next.length.toString(36)}`
+        const explicit = typeof entry.id === "string" && entry.id ? entry.id : undefined
+        let id = explicit ?? `${now.toString(36)}${(index + 1).toString(36)}`
+        // Any id must be unique against ids already taken in this write. A GENERATED
+        // id (and any id we regenerate to) must additionally be unique against ids
+        // owned by the previous list, so a regeneration can never silently inherit
+        // another row's identity. A caller-supplied id is kept as given (that is how
+        // write preserves identity across a replace) until it duplicates one used in
+        // this same write. Bounded so a pathological input cannot spin forever.
+        const ownedByPrevious = (candidate: string) => candidate !== explicit && previous.has(candidate)
+        for (let attempt = 0; used.has(id) || ownedByPrevious(id); attempt++) {
+          id = `${now.toString(36)}${(index + 1).toString(36)}${next.length.toString(36)}${attempt ? attempt.toString(36) : ""}`
+          if (attempt > 64) break
+        }
         used.add(id)
         const prior = previous.get(id)
         const item: TodoItem = { id, content, status, priority, createdAt: prior?.createdAt ?? now, updatedAt: now }
@@ -247,7 +257,7 @@ export function applyMutation(
         todo.priority = input.priority
         changed = true
       }
-      if (input.notes !== undefined) {
+      if (Array.isArray(input.notes)) {
         const next = coerceNotes(input.notes)
         if (!sameNotes(next, todo.notes)) {
           if (next) todo.notes = next
@@ -270,11 +280,22 @@ export function applyMutation(
       return { state: { version: 1, todos }, summary: `Completed "${todo.content}"` }
     }
 
-    // Reorder one item. Exactly one of before/after/position; before/after take a
+    // Reorder one item. EXACTLY one of before/after/position; before/after take a
     // target id (resolved the same defensively way as every other action).
     case "move": {
       const found = findTodo(todos, input.id)
       if (found.index < 0) return { state, summary: `move: ${found.error}` }
+
+      // Enforce exactly one selector BEFORE any mutation, so a malformed call can
+      // never half-apply. `before`/`after` count when defined; `position` counts
+      // when it is a finite number.
+      const selectors =
+        (input.before !== undefined ? 1 : 0) +
+        (input.after !== undefined ? 1 : 0) +
+        (typeof input.position === "number" && Number.isFinite(input.position) ? 1 : 0)
+      if (selectors === 0) return { state, summary: "move: give before, after, or position" }
+      if (selectors > 1) return { state, summary: "move: give exactly one of before, after, or position" }
+
       const from = found.index
       const [item] = todos.splice(from, 1)
 
@@ -287,10 +308,8 @@ export function applyMutation(
         const anchor = findTodo(todos, input.after)
         if (anchor.index < 0) return { state, summary: `move: after ${anchor.error}` }
         target = anchor.index + 1
-      } else if (typeof input.position === "number" && Number.isFinite(input.position)) {
-        target = Math.trunc(input.position)
       } else {
-        return { state, summary: "move: give before, after, or position" }
+        target = Math.trunc(input.position as number)
       }
 
       // Clamp against the list the item was just removed from.
@@ -424,7 +443,7 @@ export default {
         description:
           "Manage the current session's todo list. Read back the real stored list for this session with action 'list'. " +
           "Mutations: 'write' (V1 todowrite parity: replace the whole list from `todos`), 'add' (content [status] [priority] [notes]), " +
-          "'update' (id [content] [status] [priority] [notes]), 'complete' (id), 'move' (id with before/after/position), 'clear' (wipes the list). " +
+          "'update' (id [content] [status] [priority] [notes]), 'complete' (id), 'move' (id plus EXACTLY ONE of before/after/position), 'clear' (wipes the list). " +
           "'open' lists unfinished todos across ALL sessions. Statuses: pending, in_progress, completed, cancelled. " +
           "Priorities: high, medium, low. The list persists per session across turns and is not auto-pruned.",
         input: {
@@ -474,19 +493,35 @@ export default {
             },
             before: {
               type: "string",
-              description: "For action 'move': insert the item before the todo with this id.",
+              description:
+                "For action 'move': insert the item before the todo with this id. Give EXACTLY ONE of before/after/position.",
             },
             after: {
               type: "string",
-              description: "For action 'move': insert the item after the todo with this id.",
+              description:
+                "For action 'move': insert the item after the todo with this id. Give EXACTLY ONE of before/after/position.",
             },
             position: {
               type: "number",
-              description: "For action 'move': 0-based target index (clamped).",
+              description: "For action 'move': 0-based target index (clamped). Give EXACTLY ONE of before/after/position.",
             },
           },
           required: ["action"],
           additionalProperties: false,
+          // Enforce the move rule in the schema too: at most one selector may be
+          // present. (Zero is still allowed here because the action is not pinned
+          // to 'move' at the schema level — the runtime gives the explicit error.)
+          oneOf: [
+            { not: { anyOf: [{ required: ["before"] }, { required: ["after"] }, { required: ["position"] }] } },
+            {
+              oneOf: [{ required: ["before"] }, { required: ["after"] }, { required: ["position"] }],
+              allOf: [
+                { not: { required: ["before", "after"] } },
+                { not: { required: ["before", "position"] } },
+                { not: { required: ["after", "position"] } },
+              ],
+            },
+          ],
         },
         options: { codemode: true },
         async execute(input: any, context: any) {

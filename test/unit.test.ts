@@ -213,6 +213,15 @@ describe("notes (#3)", () => {
     expect(state.todos[0]).not.toHaveProperty("notes")
   })
 
+  test("a non-array notes on update is ignored, not a delete", () => {
+    const added = applyMutation(empty, { action: "add", content: "a", notes: ["keep"] }).state
+    const before = added.todos[0].updatedAt
+    const { state, summary } = applyMutation(added, { action: "update", id: added.todos[0].id, notes: "nope" as any })
+    expect(state.todos[0].notes).toEqual(["keep"])
+    expect(summary).toContain("nothing to change")
+    expect(state.todos[0].updatedAt).toBe(before)
+  })
+
   test("update replaces the notes array", () => {
     const added = applyMutation(empty, { action: "add", content: "a", notes: ["old"] }).state
     const next = applyMutation(added, { action: "update", id: added.todos[0].id, notes: ["new", "more"] }).state
@@ -274,11 +283,15 @@ describe("move (#2)", () => {
 
   test("move by position reorders and bumps updatedAt", () => {
     const last = three.todos[2].id
+    const before = three.todos[2].updatedAt
     const { state, summary } = applyMutation(three, { action: "move", id: last, position: 0 })
     expect(state.todos.map((t) => t.content)).toEqual(["c", "a", "b"])
     expect(summary).toContain("Moved")
     expect(summary).toContain("position 0")
-    expect(state.todos[0].updatedAt).toBeGreaterThanOrEqual(three.todos[0].updatedAt)
+    // The MOVED item's own updatedAt must strictly increase — comparing against a
+    // different item created at the same `now` would pass even if the bump were
+    // removed (the bug this replaces).
+    expect(state.todos[0].updatedAt).toBeGreaterThan(before)
   })
 
   test("move by before inserts ahead of the target", () => {
@@ -310,6 +323,20 @@ describe("move (#2)", () => {
   test("no selector is an explicit error", () => {
     const { state, summary } = applyMutation(three, { action: "move", id: ids()[0] })
     expect(summary).toBe("move: give before, after, or position")
+    expect(state.todos.map((t) => t.content)).toEqual(["a", "b", "c"])
+  })
+
+  test("two selectors are refused and change nothing (before + after)", () => {
+    const [a, b, c] = ids()
+    const { state, summary } = applyMutation(three, { action: "move", id: c, before: a, after: b })
+    expect(summary).toBe("move: give exactly one of before, after, or position")
+    expect(state.todos.map((t) => t.content)).toEqual(["a", "b", "c"])
+  })
+
+  test("two selectors are refused and change nothing (before + position)", () => {
+    const [a, , c] = ids()
+    const { state, summary } = applyMutation(three, { action: "move", id: c, before: a, position: 2 })
+    expect(summary).toBe("move: give exactly one of before, after, or position")
     expect(state.todos.map((t) => t.content)).toEqual(["a", "b", "c"])
   })
 
@@ -402,6 +429,37 @@ describe("input hardening", () => {
     expect(summary).toContain("Updated")
     expect(state.todos[0].priority).toBe("high")
     expect(state.todos[0].status).toBe("pending")
+  })
+
+  test("write re-checks a regenerated id against both used and previous", () => {
+    // Pin `now` so the regenerated id is predictable, then plant a colliding id
+    // in `previous` so a single regeneration (the old behaviour) would still
+    // collide and silently overwrite identity.
+    const realNow = Date.now
+    Date.now = () => 1_000_000
+    try {
+      const now36 = (1_000_000).toString(36)
+      // Previous list already owns the id the regeneration would pick for entry 1.
+      const previous = {
+        version: 1 as const,
+        todos: [
+          { id: `${now36}21`, content: "old", status: "pending", priority: "medium", createdAt: 0, updatedAt: 0 },
+        ] as any[],
+      }
+      const { state } = applyMutation(previous, {
+        action: "write",
+        todos: [
+          { id: "dup", content: "one" },
+          { id: "dup", content: "two" },
+        ],
+      })
+      expect(state.todos).toHaveLength(2)
+      expect(new Set(state.todos.map((t) => t.id)).size).toBe(2)
+      // The second item must not have stolen the id age of the previous row.
+      expect(state.todos[1].createdAt).toBe(1_000_000)
+    } finally {
+      Date.now = realNow
+    }
   })
 
   test("write de-duplicates a repeated id", () => {

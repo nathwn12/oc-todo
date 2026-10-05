@@ -43,7 +43,7 @@ export default Plugin.define({
       try {
         // `client.rpc` builds a typed subclient from the shared contract.
         const remote = client.rpc(Todo)
-        const result = await remote.list({ sessionID: id })
+        const result = (await remote.list({ sessionID: id })) as { todos?: TodoItem[] }
         if (seq === requestSeq && sessionID === id) setTodos(result.todos ?? [])
       } catch {
         // A failed refresh must never blank a session we have since moved to.
