@@ -265,6 +265,12 @@ export function todoToolSchema() {
           ],
         },
       },
+      // The write rule: a 'write' MUST carry `todos`, so `{action:"write"}` alone
+      // cannot silently wipe the list. `todos: []` is still an explicit clear.
+      {
+        if: { properties: { action: { const: "write" } }, required: ["action"] },
+        then: { required: ["todos"] },
+      },
     ],
   }
 }
@@ -297,6 +303,7 @@ export function applyMutation(
     // the previous one. Existing ids are kept, new items get fresh ids, blank
     // items are dropped, and a repeated id within one write is de-duplicated.
     case "write": {
+      if (!Array.isArray(input.todos)) return { state, summary: "write requires todos" }
       const previous = new Map(state.todos.map((todo) => [todo.id, todo]))
       const used = new Set<string>()
       const next: TodoItem[] = []
@@ -349,6 +356,14 @@ export function applyMutation(
     }
 
     case "update": {
+      // Refuse an out-of-vocabulary status/priority up front: a typo must be an
+      // error, not a silent no-op that reports "nothing to change".
+      if (input.status !== undefined && !isStatus(input.status)) {
+        return { state, summary: "update: status must be one of pending, in_progress, completed, cancelled" }
+      }
+      if (input.priority !== undefined && !isPriority(input.priority)) {
+        return { state, summary: "update: priority must be one of high, medium, low" }
+      }
       const found = findTodo(todos, input.id)
       if (found.index < 0) return { state, summary: `update: ${found.error}` }
       const todo = todos[found.index]
@@ -500,8 +515,23 @@ export function aggregateOpen(entries: ReadonlyArray<{ key: string; value: unkno
       })
     }
   }
-  return { todos }
+  // Deterministic order: priority high -> medium -> low, then updatedAt DESCENDING.
+  // Decorate with the input index and break ties by it, so equal rows never
+  // reorder (a stable sort without relying on the engine's stability).
+  const ordered = todos
+    .map((todo, index) => ({ todo, index }))
+    .sort((a, b) => {
+      const rank = priorityRank(a.todo.priority) - priorityRank(b.todo.priority)
+      if (rank !== 0) return rank
+      if (a.todo.updatedAt !== b.todo.updatedAt) return b.todo.updatedAt - a.todo.updatedAt
+      return a.index - b.index
+    })
+    .map((entry) => entry.todo)
+  return { todos: ordered }
 }
+
+/** Rank for ordering: high first, low last; anything unknown sits with medium. */
+const priorityRank = (priority: string): number => (priority === "high" ? 0 : priority === "low" ? 2 : 1)
 
 /** The `todo open` render: one line per open todo, then the counts summary last. */
 export function formatOpen(todos: readonly OpenTodo[]): string {

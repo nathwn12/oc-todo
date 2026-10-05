@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { aggregateOpen, applyMutation, coerce, findTodo, format, formatOpen, todoToolSchema } from "../index.js"
 import { Todo } from "../contract.js"
+import { CONTENT_WIDTH, sidebarLines } from "../tui.js"
 import Ajv from "ajv"
 
 const empty = { version: 1 as const, todos: [] as any[] }
@@ -102,6 +103,13 @@ describe("applyMutation", () => {
     const added = applyMutation(empty, { action: "add", content: "a" }).state
     const { state } = applyMutation(added, { action: "write", todos: [] })
     expect(state.todos).toHaveLength(0)
+  })
+
+  test("write without todos is refused and changes nothing", () => {
+    const added = applyMutation(empty, { action: "add", content: "a" }).state
+    const { state, summary } = applyMutation(added, { action: "write" } as any)
+    expect(state.todos).toEqual(added.todos)
+    expect(summary).toBe("write requires todos")
   })
 })
 
@@ -414,6 +422,11 @@ describe("tool schema move-selector scope", () => {
     expect(validate({ action: "add", content: "hi", nope: 1 })).toBe(false)
     expect(validate({ content: "hi" })).toBe(false)
   })
+
+  test("schema requires todos for a write action", () => {
+    expect(validate({ action: "write" })).toBe(false)
+    expect(validate({ action: "write", todos: [] })).toBe(true)
+  })
 })
 
 describe("input hardening", () => {
@@ -487,6 +500,44 @@ describe("input hardening", () => {
     expect(state.todos[0].status).toBe("pending")
   })
 
+  test("update refuses an out-of-vocabulary status and changes nothing", () => {
+    const added = applyMutation(empty, { action: "add", content: "a" }).state
+    const before = added.todos[0].updatedAt
+    const { state, summary } = applyMutation(added, {
+      action: "update",
+      id: added.todos[0].id,
+      status: "in-progress",
+    })
+    expect(summary).toBe("update: status must be one of pending, in_progress, completed, cancelled")
+    expect(state.todos).toEqual(added.todos)
+    expect(state.todos[0].updatedAt).toBe(before)
+  })
+
+  test("update refuses an out-of-vocabulary priority and changes nothing", () => {
+    const added = applyMutation(empty, { action: "add", content: "a" }).state
+    const before = added.todos[0].updatedAt
+    const { state, summary } = applyMutation(added, {
+      action: "update",
+      id: added.todos[0].id,
+      priority: "urgent",
+    })
+    expect(summary).toBe("update: priority must be one of high, medium, low")
+    expect(state.todos).toEqual(added.todos)
+    expect(state.todos[0].updatedAt).toBe(before)
+  })
+
+  test("update with a valid status and priority still applies", () => {
+    const added = applyMutation(empty, { action: "add", content: "a" }).state
+    const { state, summary } = applyMutation(added, {
+      action: "update",
+      id: added.todos[0].id,
+      status: "in_progress",
+      priority: "high",
+    })
+    expect(state.todos[0]).toMatchObject({ status: "in_progress", priority: "high" })
+    expect(summary).toContain("Updated")
+  })
+
   test("write re-checks a regenerated id against both used and previous", () => {
     // Pin `now` so the regenerated id is predictable, then plant a colliding id
     // in `previous` so a single regeneration (the old behaviour) would still
@@ -534,6 +585,18 @@ describe("input hardening", () => {
     const { state } = applyMutation(empty, { action: "write", todos: [null as any, { content: "ok" }] })
     expect(state.todos.map((t) => t.content)).toEqual(["ok"])
   })
+
+  test("write with a non-array todos is refused and changes nothing", () => {
+    const added = applyMutation(empty, { action: "add", content: "a" }).state
+    for (const todos of [null, "nope"]) {
+      let outcome: ReturnType<typeof applyMutation> | undefined
+      expect(() => {
+        outcome = applyMutation(added, { action: "write", todos } as any)
+      }).not.toThrow()
+      expect(outcome!.state.todos).toEqual(added.todos)
+      expect(outcome!.summary).toBe("write requires todos")
+    }
+  })
 })
 
 describe("coerce", () => {
@@ -569,6 +632,29 @@ describe("cross-session open (#1)", () => {
     ])
     expect(result.todos.map((x) => x.id)).toEqual(["a", "c"])
     expect(result.todos.map((x) => x.sessionID)).toEqual(["s1", "s2"])
+  })
+
+  test("orders by priority (high -> medium -> low) then updatedAt descending", () => {
+    const mk = (id: string, priority: string, updatedAt: number) => ({
+      id,
+      content: id,
+      status: "pending",
+      priority,
+      createdAt: 1,
+      updatedAt,
+    })
+    const rows = [
+      row("s1", [mk("a", "low", 100), mk("b", "high", 5), mk("c", "medium", 50)]),
+      row("s2", [mk("d", "high", 9), mk("e", "medium", 70)]),
+    ]
+    expect(aggregateOpen(rows).todos.map((x) => x.id)).toEqual(["d", "b", "e", "c", "a"])
+    // Total order (every row distinct), so shuffling the input rows must not
+    // change the rendered result.
+    const shuffled = [
+      row("s2", [mk("e", "medium", 70), mk("d", "high", 9)]),
+      row("s1", [mk("c", "medium", 50), mk("a", "low", 100), mk("b", "high", 5)]),
+    ]
+    expect(JSON.stringify(aggregateOpen(shuffled))).toBe(JSON.stringify(aggregateOpen(rows)))
   })
 
   test("excludes completed and cancelled, and keeps the contract keys", () => {
@@ -630,5 +716,111 @@ describe("RPC contract", () => {
   test("the open method output tags each row with sessionID", () => {
     const schema = (Todo.methods.open.output as any).properties.todos.items
     expect(schema.required.sort()).toEqual(["content", "id", "priority", "sessionID", "status", "updatedAt"])
+  })
+})
+
+// PART B/C: the TUI-native sidebar renderer. Assertions are cell widths, never
+// screenshots, so the pure `sidebarLines` renderer is pinned independently of
+// any renderer that may not carry the theme.
+describe("sidebarLines (TUI-native sidebar)", () => {
+  const LABEL_WIDTH = 1
+  const fixture = [
+    { id: "1", content: "write docs", status: "pending", priority: "high" },
+    { id: "2", content: "review pr", status: "in_progress", priority: "medium" },
+    { id: "3", content: "ship it", status: "completed", priority: "low" },
+    { id: "4", content: "scrap it", status: "cancelled", priority: "low" },
+  ]
+  const expanded = sidebarLines(fixture, { expanded: true })
+
+  test("renders the header then one row per item, with exact cell widths", () => {
+    expect(expanded.map((line) => line.text)).toEqual([
+      "v Todos 2/4",
+      "- write docs",
+      "~ review pr",
+      "x ship it",
+      "/ scrap it",
+    ])
+    expect(expanded.map((line) => Bun.stringWidth(line.text))).toEqual([11, 12, 11, 9, 10])
+  })
+
+  test("every line is a label column plus a separator before the value", () => {
+    for (const line of expanded) {
+      const label = line.text.slice(0, LABEL_WIDTH)
+      expect(Bun.stringWidth(label)).toBe(LABEL_WIDTH)
+      expect(line.text[LABEL_WIDTH]).toBe(" ")
+      // The value can never begin inside the label column.
+      expect(line.text.slice(0, LABEL_WIDTH + 1)).toBe(`${label} `)
+    }
+  })
+
+  test("no line carries a wide/fullwidth character and none is an emoji", () => {
+    for (const line of expanded) {
+      for (const char of line.text) {
+        expect(Bun.stringWidth(char)).toBe(1)
+        expect(/\p{Extended_Pictographic}/u.test(char)).toBe(false)
+      }
+    }
+    // Positive control: the guard itself detects a real wide glyph and a real emoji.
+    expect(Bun.stringWidth("\u4e2d")).toBe(2)
+    expect(Bun.stringWidth("\u{1f600}")).toBe(2)
+  })
+
+  test("the four status marks are distinct single cells", () => {
+    const marks = ["pending", "in_progress", "completed", "cancelled"].map(
+      (status) => sidebarLines([{ id: "a", content: "c", status, priority: "low" }], { expanded: true })[1].text[0],
+    )
+    expect(marks).toEqual(["-", "~", "x", "/"])
+    expect(new Set(marks).size).toBe(4)
+  })
+
+  test("muted marks closed rows only", () => {
+    expect(expanded.map((line) => line.muted)).toEqual([false, false, false, true, true])
+  })
+
+  test("a long content is clipped to the value budget", () => {
+    const long = sidebarLines([{ id: "a", content: "x".repeat(100), status: "pending", priority: "low" }], {
+      expanded: true,
+    })[1].text
+    expect(long.endsWith("\u2026")).toBe(true)
+    expect(Bun.stringWidth(long.slice(LABEL_WIDTH + 1))).toBe(CONTENT_WIDTH)
+    expect(Bun.stringWidth(long)).toBe(LABEL_WIDTH + 1 + CONTENT_WIDTH)
+  })
+
+  test("a clipped surrogate pair is never left orphaned", () => {
+    // The cut lands between the pair's halves: 26 chars, then the high surrogate.
+    const row = sidebarLines(
+      [{ id: "a", content: `${"a".repeat(26)}\u{1f600}b`, status: "pending", priority: "low" }],
+      { expanded: true },
+    )[1].text
+    expect(row).not.toContain("\ufffd")
+    expect(row.endsWith("\u2026")).toBe(true)
+  })
+
+  test("notes render as a suffix in the value column", () => {
+    const withNotes = (notes: string[]) =>
+      sidebarLines([{ id: "a", content: "x", status: "pending", priority: "low", notes }], { expanded: true })[1].text
+    expect(withNotes(["one", "two"])).toBe("- x (2 notes)")
+    expect(withNotes(["one"])).toBe("- x (1 note)")
+    expect(withNotes([])).toBe("- x")
+  })
+
+  test("the collapsed and expanded headers share identical column offsets", () => {
+    const collapsed = sidebarLines(fixture, { expanded: false })
+    expect(collapsed).toHaveLength(1)
+    expect(collapsed[0].text).toBe("> Todos 2/4")
+    // The toggle is the only difference; the value begins at the same column.
+    expect(collapsed[0].text.slice(LABEL_WIDTH)).toBe(expanded[0].text.slice(LABEL_WIDTH))
+    expect(collapsed[0].text[LABEL_WIDTH]).toBe(" ")
+  })
+
+  test("empty list hides, and a fully closed list auto-collapses without a checkmark", () => {
+    expect(sidebarLines([])).toEqual([])
+    const closedFixture = [
+      { id: "1", content: "a", status: "completed", priority: "low" },
+      { id: "2", content: "b", status: "cancelled", priority: "low" },
+    ]
+    const auto = sidebarLines(closedFixture)
+    expect(auto).toHaveLength(1)
+    expect(auto[0].text).toBe("> Todos 2/2")
   })
 })
