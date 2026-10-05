@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.0
+
+Tier 1 slice. Contract change: item shape, tool schema, and RPC.
+
+- **#1 Cross-session list** — new `todo.open` RPC returns every unfinished todo
+  across all stored sessions, each tagged with its `sessionID`; a new `open` tool
+  action renders it. `todo.list` stays per-session.
+- **#2 Move / reorder** — new `move` action with `before` / `after` / `position`
+  (id resolved by exact/prefix). Position is clamped after removal; a no-op move
+  does not bump `updatedAt`.
+- **#3 Notes on an item** — optional `notes: string[]` on `add`, `update`
+  (replace; empty clears), and `write`; malformed stored notes are repaired by
+  `coerce`; `format` indents them under their item line.
+- **#4 Counts summary line** — `format` ends with `3 open · 1 in progress · 2 done`;
+  `cancelled` is counted in none of the three.
+- Sidebar: each item shows a compact note count when it has notes.
+- Tests: 32 -> 61.
+
 ## 0.1.2
 
 - A no-op `update` is now correctly reported. Re-supplying a todo's current
