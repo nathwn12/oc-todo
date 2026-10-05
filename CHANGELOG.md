@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.2.2
+
+Post-release review fixes for the 0.2.1 hardening. No feature or contract
+change; correctness and enforcement only.
+
+- Fix: the tool schema's move-selector guard is scoped to `action: "move"` (via
+  `if`/`then`) instead of a root `oneOf`. Previously the global guard rejected
+  ANY call carrying two of `before`/`after`/`position`, including non-move
+  actions that never read them. Runtime `applyMutation` stays authoritative for
+  the zero/one/many cases and their exact summaries.
+- Build: `check` now runs `bun test && tsc --noEmit`, so `tsc` is enforced by
+  CI (`.github/workflows/check.yml` runs `bun run check`) and by
+  `prepublishOnly`, closing the gap where type regressions went unchecked.
+- Test: the move-bumps-`updatedAt` assertion pins and advances `Date.now`, so
+  the strict `toBeGreaterThan` is deterministic rather than depending on the
+  move landing in a later millisecond (the no-op test's `toBe(before)` still
+  holds).
+- Docs: `docs/specs/v0.2.0.md` records the `>1` selector refusal and its exact
+  summary string `move: give exactly one of before, after, or position`, matching
+  the code and CHANGELOG.
+- Tests: 65 -> 69.
+
 ## 0.2.1
 
 Post-release review fixes. No feature change; hardening only. Behaviour change:
