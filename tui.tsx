@@ -15,6 +15,7 @@ interface TodoItem {
   content: string
   status: string
   priority: string
+  notes?: string[]
 }
 
 const STATUS_DOT: Record<string, string> = {
@@ -99,7 +100,9 @@ export default Plugin.define({
                       wrapMode="none"
                       truncate
                     >
-                      {`[${STATUS_DOT[todo.status] ?? "-"}] ${todo.content}`}
+                      {`[${STATUS_DOT[todo.status] ?? "-"}] ${todo.content}${
+                        todo.notes && todo.notes.length > 0 ? ` (${todo.notes.length} note${todo.notes.length > 1 ? "s" : ""})` : ""
+                      }`}
                     </text>
                   )}
                 </For>

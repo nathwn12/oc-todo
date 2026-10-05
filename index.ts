@@ -28,6 +28,7 @@ interface TodoItem {
   content: string
   status: "pending" | "in_progress" | "completed" | "cancelled"
   priority: "high" | "medium" | "low"
+  notes?: string[]
   createdAt: number
   updatedAt: number
 }
@@ -47,10 +48,34 @@ const isPriority = (value: unknown): value is TodoItem["priority"] =>
 
 // Storage keys are global to the plugin, so the session is folded into the key.
 // This is what makes the list session-scoped and durable across server restarts.
-const keyOf = (sessionID: string) => `todos/session/${sessionID}`
+const OPEN_PREFIX = "todos/session/"
+const keyOf = (sessionID: string) => `${OPEN_PREFIX}${sessionID}`
 
 function emptyState(): TodoListState {
   return { version: 1, todos: [] }
+}
+
+/**
+ * Coerce arbitrary input into a valid `notes` array, or `undefined` when there is
+ * nothing usable. Keeps only string entries, trims each, drops empties. Used by
+ * both the write path and `coerce`, so stored and incoming notes repair alike.
+ */
+export function coerceNotes(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const notes: string[] = []
+  for (const entry of raw) {
+    if (typeof entry !== "string") continue
+    const trimmed = entry.trim()
+    if (trimmed) notes.push(trimmed)
+  }
+  return notes.length > 0 ? notes : undefined
+}
+
+/** Array equality, order-sensitive. Used for the notes no-op check. */
+function sameNotes(a: string[] | undefined, b: string[] | undefined): boolean {
+  if (a === undefined && b === undefined) return true
+  if (a === undefined || b === undefined) return false
+  return a.length === b.length && a.every((value, index) => value === b[index])
 }
 
 /**
@@ -67,14 +92,17 @@ export function coerce(raw: unknown): TodoListState {
       if (!item || typeof item !== "object") continue
       const todo = item as Partial<TodoItem>
       if (typeof todo.id !== "string") continue
-      todos.push({
+      const repaired: TodoItem = {
         id: todo.id,
         content: typeof todo.content === "string" ? todo.content : "",
         status: isStatus(todo.status) ? todo.status : "pending",
         priority: isPriority(todo.priority) ? todo.priority : "medium",
         createdAt: typeof todo.createdAt === "number" ? todo.createdAt : 0,
         updatedAt: typeof todo.updatedAt === "number" ? todo.updatedAt : 0,
-      })
+      }
+      const notes = coerceNotes(todo.notes)
+      if (notes) repaired.notes = notes
+      todos.push(repaired)
     }
   }
   return { version: 1, todos }
@@ -96,6 +124,27 @@ async function writeState(
 }
 
 /**
+ * Enumerate every stored session todo row through the host storage scan. Pages by
+ * `after`/`next`; a page that returns no `next` ends the walk, and a hostile
+ * repeating `next` cannot loop forever because each step must advance strictly.
+ */
+async function scanSessionRows(
+  storage: { scan(options: { prefix: string; after?: string; limit?: number }): Promise<any> },
+): Promise<Array<{ key: string; value: unknown }>> {
+  const rows: Array<{ key: string; value: unknown }> = []
+  let after: string | undefined
+  for (;;) {
+    const page = await storage.scan({ prefix: `${OPEN_PREFIX}`, after, limit: 1000 })
+    const entries: Array<{ key: string; value: unknown }> = Array.isArray(page?.entries) ? page.entries : []
+    rows.push(...entries)
+    const next = page?.next
+    if (typeof next !== "string" || next === after || entries.length === 0) break
+    after = next
+  }
+  return rows
+}
+
+/**
  * Resolve a todo by exact id, then by a unique prefix. An ambiguous prefix is
  * an error, never a silent pick of the first match.
  */
@@ -113,12 +162,16 @@ export function findTodo(todos: TodoItem[], id: string | undefined): { index: nu
 export function applyMutation(
   state: TodoListState,
   input: {
-    action: "add" | "update" | "complete" | "clear" | "write"
+    action: "add" | "update" | "complete" | "clear" | "write" | "move"
     id?: string
     content?: string
     status?: string
     priority?: string
-    todos?: ReadonlyArray<{ id?: string; content?: string; status?: string; priority?: string }>
+    notes?: string[]
+    before?: string
+    after?: string
+    position?: number
+    todos?: ReadonlyArray<{ id?: string; content?: string; status?: string; priority?: string; notes?: string[] }>
   },
 ): { state: TodoListState; summary: string } {
   const now = Date.now()
@@ -147,7 +200,10 @@ export function applyMutation(
         if (used.has(id)) id = `${now.toString(36)}${(index + 1).toString(36)}${next.length.toString(36)}`
         used.add(id)
         const prior = previous.get(id)
-        next.push({ id, content, status, priority, createdAt: prior?.createdAt ?? now, updatedAt: now })
+        const item: TodoItem = { id, content, status, priority, createdAt: prior?.createdAt ?? now, updatedAt: now }
+        const notes = coerceNotes(entry.notes)
+        if (notes) item.notes = notes
+        next.push(item)
       }
       return { state: { version: 1, todos: next }, summary: `Wrote ${next.length} todo(s)` }
     }
@@ -157,14 +213,17 @@ export function applyMutation(
       if (!content) return { state, summary: "add requires content" }
       const status = isStatus(input.status) ? input.status : "pending"
       const priority = isPriority(input.priority) ? input.priority : "medium"
-      todos.push({
+      const item: TodoItem = {
         id: `${now.toString(36)}${(todos.length + 1).toString(36)}`,
         content,
         status,
         priority,
         createdAt: now,
         updatedAt: now,
-      })
+      }
+      const notes = coerceNotes(input.notes)
+      if (notes) item.notes = notes
+      todos.push(item)
       return { state: { version: 1, todos }, summary: `Added "${content}" (${status}, ${priority})` }
     }
 
@@ -188,6 +247,14 @@ export function applyMutation(
         todo.priority = input.priority
         changed = true
       }
+      if (input.notes !== undefined) {
+        const next = coerceNotes(input.notes)
+        if (!sameNotes(next, todo.notes)) {
+          if (next) todo.notes = next
+          else delete todo.notes
+          changed = true
+        }
+      }
       if (!changed) return { state, summary: `update: nothing to change for "${todo.content}"` }
       todo.updatedAt = now
       return { state: { version: 1, todos }, summary: `Updated "${todo.content}" -> ${todo.status}` }
@@ -203,9 +270,53 @@ export function applyMutation(
       return { state: { version: 1, todos }, summary: `Completed "${todo.content}"` }
     }
 
+    // Reorder one item. Exactly one of before/after/position; before/after take a
+    // target id (resolved the same defensively way as every other action).
+    case "move": {
+      const found = findTodo(todos, input.id)
+      if (found.index < 0) return { state, summary: `move: ${found.error}` }
+      const from = found.index
+      const [item] = todos.splice(from, 1)
+
+      let target: number
+      if (input.before !== undefined) {
+        const anchor = findTodo(todos, input.before)
+        if (anchor.index < 0) return { state, summary: `move: before ${anchor.error}` }
+        target = anchor.index
+      } else if (input.after !== undefined) {
+        const anchor = findTodo(todos, input.after)
+        if (anchor.index < 0) return { state, summary: `move: after ${anchor.error}` }
+        target = anchor.index + 1
+      } else if (typeof input.position === "number" && Number.isFinite(input.position)) {
+        target = Math.trunc(input.position)
+      } else {
+        return { state, summary: "move: give before, after, or position" }
+      }
+
+      // Clamp against the list the item was just removed from.
+      target = Math.max(0, Math.min(target, todos.length))
+      if (target === from) {
+        // No-op: the item already sits at the target index. Never rewrite state.
+        return { state, summary: `move: nothing to change for "${item.content}"` }
+      }
+      item.updatedAt = now
+      todos.splice(target, 0, item)
+      return { state: { version: 1, todos }, summary: `Moved "${item.content}" to position ${target}` }
+    }
+
     default:
       return { state, summary: `Unknown action "${(input as { action: string }).action}"` }
   }
+}
+
+/**
+ * The counts summary line: numbers then words, space-middot-space separators.
+ * `cancelled` is a terminal state like `completed` and is counted in none of the
+ * three buckets. Exported so the cross-session `todo.open` render shares it.
+ */
+export function countsLine(state: { todos: readonly { status: string }[] }): string {
+  const count = (status: string) => state.todos.filter((todo) => todo.status === status).length
+  return `${count("pending")} open · ${count("in_progress")} in progress · ${count("completed")} done`
 }
 
 /** One compact line per todo, the same text a caller reads back. */
@@ -213,9 +324,61 @@ export function format(state: TodoListState): string {
   if (state.todos.length === 0) return "No todos."
   const mark = (s: TodoItem["status"]) =>
     s === "completed" ? "[x]" : s === "in_progress" ? "[~]" : s === "cancelled" ? "[-]" : "[ ]"
-  return state.todos
-    .map((todo) => `${mark(todo.status)} (${todo.id}) [${todo.priority}] ${todo.content}`)
-    .join("\n")
+  const lines: string[] = []
+  for (const todo of state.todos) {
+    lines.push(`${mark(todo.status)} (${todo.id}) [${todo.priority}] ${todo.content}`)
+    for (const note of todo.notes ?? []) lines.push(`  - ${note}`)
+  }
+  // The summary is always the final line, after any notes rows.
+  lines.push(countsLine(state))
+  return lines.join("\n")
+}
+
+/** One open todo across all sessions, tagged with the session that owns it. */
+export interface OpenTodo {
+  sessionID: string
+  id: string
+  content: string
+  status: string
+  priority: string
+  updatedAt: number
+}
+
+/**
+ * Roll up every NON-completed, NON-cancelled todo the plugin has stored, across
+ * all sessions. Input is the scanned storage rows (`{ key, value }`) so this is
+ * pure; the caller owns enumeration (paged via `ctx.storage.scan`). Rows that are
+ * not session todo keys, and rows that fail `coerce`, are skipped — this is a
+ * read, never a repair-write.
+ */
+export function aggregateOpen(entries: ReadonlyArray<{ key: string; value: unknown }>): { todos: OpenTodo[] } {
+  const todos: OpenTodo[] = []
+  for (const entry of entries) {
+    if (typeof entry.key !== "string" || !entry.key.startsWith(OPEN_PREFIX)) continue
+    const sessionID = entry.key.slice(OPEN_PREFIX.length)
+    if (!sessionID) continue
+    const state = coerce(entry.value)
+    for (const todo of state.todos) {
+      if (todo.status === "completed" || todo.status === "cancelled") continue
+      todos.push({
+        sessionID,
+        id: todo.id,
+        content: todo.content,
+        status: todo.status,
+        priority: todo.priority,
+        updatedAt: todo.updatedAt,
+      })
+    }
+  }
+  return { todos }
+}
+
+/** The `todo open` render: one line per open todo, then the counts summary last. */
+export function formatOpen(todos: readonly OpenTodo[]): string {
+  if (todos.length === 0) return `No open todos.\n${countsLine({ todos: [] })}`
+  const lines = todos.map((todo) => `(${todo.sessionID}) [${todo.priority}] ${todo.content}`)
+  lines.push(countsLine({ todos }))
+  return lines.join("\n")
 }
 
 export default {
@@ -248,6 +411,11 @@ export default {
         const state = await readState(store, sessionID)
         return { todos: state.todos }
       },
+      // Cross-session roll-up. Enumerates every stored session row via the host
+      // storage scan, paged by `next`, then aggregates purely.
+      async open() {
+        return aggregateOpen(await scanSessionRows(ctx.storage))
+      },
     })
 
     await ctx.tool.transform((editor: any) => {
@@ -255,23 +423,23 @@ export default {
         name: "todo",
         description:
           "Manage the current session's todo list. Read back the real stored list for this session with action 'list'. " +
-          "Mutations: 'write' (V1 todowrite parity: replace the whole list from `todos`), 'add' (content [status] [priority]), " +
-          "'update' (id [content] [status] [priority]), 'complete' (id), 'clear' (wipes the list). " +
-          "Statuses: pending, in_progress, completed, cancelled. Priorities: high, medium, low. " +
-          "The list persists per session across turns and is not auto-pruned.",
+          "Mutations: 'write' (V1 todowrite parity: replace the whole list from `todos`), 'add' (content [status] [priority] [notes]), " +
+          "'update' (id [content] [status] [priority] [notes]), 'complete' (id), 'move' (id with before/after/position), 'clear' (wipes the list). " +
+          "'open' lists unfinished todos across ALL sessions. Statuses: pending, in_progress, completed, cancelled. " +
+          "Priorities: high, medium, low. The list persists per session across turns and is not auto-pruned.",
         input: {
           type: "object",
           properties: {
             action: {
               type: "string",
-              enum: ["list", "add", "update", "complete", "clear", "write"],
+              enum: ["list", "open", "add", "update", "complete", "move", "clear", "write"],
               description: "What to do with the session todo list.",
             },
             todos: {
               type: "array",
               description:
                 "Full replacement list for action 'write' (V1 todowrite parity). Each item needs content; " +
-                "id/status/priority are optional (id keeps an existing item's identity and createdAt).",
+                "id/status/priority/notes are optional (id keeps an existing item's identity and createdAt).",
               items: {
                 type: "object",
                 properties: {
@@ -279,13 +447,14 @@ export default {
                   content: { type: "string" },
                   status: { type: "string", enum: ["pending", "in_progress", "completed", "cancelled"] },
                   priority: { type: "string", enum: ["high", "medium", "low"] },
+                  notes: { type: "array", items: { type: "string" } },
                 },
                 required: ["content"],
               },
             },
             id: {
               type: "string",
-              description: "Todo id (exact, or an unambiguous prefix) for update/complete.",
+              description: "Todo id (exact, or an unambiguous prefix) for update/complete/move.",
             },
             content: { type: "string", description: "Todo text for add, or replacement text for update." },
             status: {
@@ -298,6 +467,23 @@ export default {
               enum: ["high", "medium", "low"],
               description: "Priority for add or update.",
             },
+            notes: {
+              type: "array",
+              items: { type: "string" },
+              description: "Notes for add, or the replacement notes array for update (empty clears).",
+            },
+            before: {
+              type: "string",
+              description: "For action 'move': insert the item before the todo with this id.",
+            },
+            after: {
+              type: "string",
+              description: "For action 'move': insert the item after the todo with this id.",
+            },
+            position: {
+              type: "number",
+              description: "For action 'move': 0-based target index (clamped).",
+            },
           },
           required: ["action"],
           additionalProperties: false,
@@ -305,12 +491,22 @@ export default {
         options: { codemode: true },
         async execute(input: any, context: any) {
           const request = input as {
-            action: "list" | "add" | "update" | "complete" | "clear" | "write"
+            action: "list" | "open" | "add" | "update" | "complete" | "move" | "clear" | "write"
             id?: string
             content?: string
             status?: string
             priority?: string
-            todos?: ReadonlyArray<{ id?: string; content?: string; status?: string; priority?: string }>
+            notes?: string[]
+            before?: string
+            after?: string
+            position?: number
+            todos?: ReadonlyArray<{
+              id?: string
+              content?: string
+              status?: string
+              priority?: string
+              notes?: string[]
+            }>
           }
           // Session scope comes from the tool call context, not from the caller.
           const sessionID = String(context.sessionID)
@@ -320,9 +516,15 @@ export default {
             return { content: `${format(state)}\n${state.todos.length} todo(s) for session ${sessionID}.` }
           }
 
+          if (request.action === "open") {
+            const { todos } = aggregateOpen(await scanSessionRows(ctx.storage))
+            return { content: formatOpen(todos) }
+          }
+
           const { state, summary } = await serialize(sessionID, async () => {
             const current = await readState(store, sessionID)
-            const outcome = applyMutation(current, request)
+            // `list` and `open` returned above; the rest are mutations.
+            const outcome = applyMutation(current, request as Parameters<typeof applyMutation>[1])
             // A no-op must not rewrite storage or fire a change event.
             if (JSON.stringify(outcome.state) !== JSON.stringify(current)) {
               await writeState(store, sessionID, outcome.state)

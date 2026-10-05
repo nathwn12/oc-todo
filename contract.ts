@@ -32,10 +32,43 @@ export const Todo = {
                 content: { type: "string" },
                 status: { type: "string" },
                 priority: { type: "string" },
+                notes: { type: "array", items: { type: "string" } },
                 createdAt: { type: "number" },
                 updatedAt: { type: "number" },
               },
               required: ["id", "content", "status", "priority"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["todos"],
+        additionalProperties: false,
+      },
+    },
+    // Cross-session roll-up: unfinished todos across ALL stored sessions, each
+    // tagged with the session that owns it. Read-only, like `list`.
+    open: {
+      input: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+      output: {
+        type: "object",
+        properties: {
+          todos: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                sessionID: { type: "string" },
+                id: { type: "string" },
+                content: { type: "string" },
+                status: { type: "string" },
+                priority: { type: "string" },
+                updatedAt: { type: "number" },
+              },
+              required: ["sessionID", "id", "content", "status", "priority", "updatedAt"],
               additionalProperties: false,
             },
           },
