@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.3.0
+
+Tool-contract tightening plus the TUI-native sidebar rework.
+
+- Change: `write` now requires `todos`. A `write` with no `todos` is refused with
+  `write requires todos` and changes nothing (previously it cleared the list).
+- Change: `update` refuses an out-of-vocabulary `status` or `priority` with
+  `update: status must be one of pending, in_progress, completed, cancelled` /
+  `update: priority must be one of high, medium, low` and changes nothing.
+  `add` and `write` still default an unknown value to `pending`/`medium`.
+- Change: `open` orders by priority (`high` → `medium` → `low`) then `updatedAt`
+  descending, so the order is deterministic for a given set of rows; exact
+  (priority, `updatedAt`) ties keep their input order.
+- Sidebar: single-cell status marks — `-` pending, `~` in_progress, `x`
+  completed, `/` cancelled — replacing the shared `-` (pending/cancelled) and the
+  three-cell `[x]` tokens. Every row is a one-cell label column plus its
+  guaranteed separator, then a value clipped to a 28-cell budget; the header
+  uses an ASCII `v`/`>` toggle and no longer renders `✓`. The marks, the toggle,
+  and the ellipsis are single-cell and narrow; a wide-character content value is
+  clipped at render time, so the row cannot wrap.
+- Tests: 70 -> 87 (cell-width assertions for the pure `sidebarLines` renderer).
+
 ## 0.2.3
 
 Certification hardening. No feature or contract change.
