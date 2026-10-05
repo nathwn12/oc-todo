@@ -275,6 +275,24 @@ describe("notes (#3)", () => {
     expect(lines[2]).toBe("  - two")
     expect(lines[lines.length - 1]).toBe("1 open · 0 in progress · 0 done")
   })
+
+  test("coerce repairs non-finite timestamps so they never serialize to null", () => {
+    const state = coerce({
+      version: 1,
+      todos: [
+        { id: "a", createdAt: NaN, updatedAt: Infinity },
+        { id: "b", createdAt: -Infinity, updatedAt: NaN },
+      ],
+    })
+    for (const todo of state.todos) {
+      expect(Number.isFinite(todo.createdAt)).toBe(true)
+      expect(Number.isFinite(todo.updatedAt)).toBe(true)
+    }
+    // The contract declares both as numbers; JSON must never emit null here.
+    const row = JSON.parse(JSON.stringify(state.todos[0]))
+    expect(typeof row.createdAt).toBe("number")
+    expect(typeof row.updatedAt).toBe("number")
+  })
 })
 
 // #2 Move / reorder.

@@ -97,8 +97,8 @@ export function coerce(raw: unknown): TodoListState {
         content: typeof todo.content === "string" ? todo.content : "",
         status: isStatus(todo.status) ? todo.status : "pending",
         priority: isPriority(todo.priority) ? todo.priority : "medium",
-        createdAt: typeof todo.createdAt === "number" ? todo.createdAt : 0,
-        updatedAt: typeof todo.updatedAt === "number" ? todo.updatedAt : 0,
+        createdAt: typeof todo.createdAt === "number" && Number.isFinite(todo.createdAt) ? todo.createdAt : 0,
+        updatedAt: typeof todo.updatedAt === "number" && Number.isFinite(todo.updatedAt) ? todo.updatedAt : 0,
       }
       const notes = coerceNotes(todo.notes)
       if (notes) repaired.notes = notes
