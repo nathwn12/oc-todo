@@ -1,6 +1,6 @@
 {
   "name": "oc-todo",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Per-session todo lists for OpenCode V2 - a `todo` tool with real plugin storage and a read-only sidebar checklist, including V1 todowrite parity.",
   "keywords": [
     "opencode",

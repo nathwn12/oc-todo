@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.3
+
+Certification hardening. No feature or contract change.
+
+- Fix: `coerce` now repairs non-finite timestamps (`NaN`, `Infinity`,
+  `-Infinity`) on a stored row to `0`, instead of letting them through. Such
+  values are `typeof "number"` but JSON-serialize to `null`, which violated the
+  `list` output contract (`{type:"number"}`) and `open`'s required `updatedAt`.
+  Reachable only via a hand-edited or partially-written stored row — the exact
+  surface `coerce` exists to defend.
+- Tests: 69 -> 70.
+
 ## 0.2.2
 
 Post-release review fixes for the 0.2.1 hardening. No feature or contract
