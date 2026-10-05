@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.1
+
+Post-release review fixes. No feature change; hardening only. Behaviour change:
+`move` now refuses more than one selector instead of silently preferring `before`.
+
+- Fix: `move` enforces exactly one of `before` / `after` / `position`. A call with
+  more than one is refused with `move: give exactly one of before, after, or
+  position` and changes nothing (previously `before` won and the others were
+  silently ignored). Mirrored in the tool schema wording (and a `oneOf` guard).
+- Fix: `update` with a non-array `notes` is ignored like `add`/`write`, never a
+  delete of existing notes.
+- Fix: `write` re-checks a regenerated id until it is unique against both ids used
+  in the same write and ids owned by the previous list (bounded), so a collision
+  can no longer make one item inherit another's identity/`createdAt`.
+- Test: the "real move bumps `updatedAt`" assertion now compares the moved item
+  against its OWN prior `updatedAt` (strict), not a different item.
+- Tests: 61 -> 65.
+
 ## 0.2.0
 
 Tier 1 slice. Contract change: item shape, tool schema, and RPC.
