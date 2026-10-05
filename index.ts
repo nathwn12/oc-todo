@@ -158,6 +158,117 @@ export function findTodo(todos: TodoItem[], id: string | undefined): { index: nu
   return { index: matches[0] }
 }
 
+/** The `todo` tool's human/agent-facing description (kept beside the schema so the
+ *  move selector rule reads the same in both). */
+export const TODO_TOOL_DESCRIPTION =
+  "Manage the current session's todo list. Read back the real stored list for this session with action 'list'. " +
+  "Mutations: 'write' (V1 todowrite parity: replace the whole list from `todos`), 'add' (content [status] [priority] [notes]), " +
+  "'update' (id [content] [status] [priority] [notes]), 'complete' (id), " +
+  "'move' (id plus EXACTLY ONE of before/after/position), 'clear' (wipes the list). " +
+  "'open' lists unfinished todos across ALL sessions. Statuses: pending, in_progress, completed, cancelled. " +
+  "Priorities: high, medium, low. The list persists per session across turns and is not auto-pruned."
+
+/**
+ * The `todo` tool's input schema. Extracted (and exported) so a test can assert
+ * the move selector guard is scoped to action 'move' — the guard's whole point is
+ * that it does not reject a non-move call carrying extra selector keys.
+ *
+ * The move rule is "give EXACTLY ONE of before/after/position". The schema pins
+ * that rule to 'move' (via `if`/`then`), so:
+ *   - action 'move' with 2+ selectors is refused before execute runs;
+ *   - action 'move' with 0 or 1 selector passes the schema (whether 0 is an error
+ *     depends on nothing else) and the runtime gives the exact summary;
+ *   - any non-'move' action is never touched by the guard, whatever keys it sends.
+ * Runtime `applyMutation` stays authoritative for the zero/one/many cases and for
+ * the exact `move: give exactly one of before, after, or position` summary.
+ */
+export function todoToolSchema() {
+  return {
+    type: "object",
+    properties: {
+      action: {
+        type: "string",
+        enum: ["list", "open", "add", "update", "complete", "move", "clear", "write"],
+        description: "What to do with the session todo list.",
+      },
+      todos: {
+        type: "array",
+        description:
+          "Full replacement list for action 'write' (V1 todowrite parity). Each item needs content; " +
+          "id/status/priority/notes are optional (id keeps an existing item's identity and createdAt).",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+            content: { type: "string" },
+            status: { type: "string", enum: ["pending", "in_progress", "completed", "cancelled"] },
+            priority: { type: "string", enum: ["high", "medium", "low"] },
+            notes: { type: "array", items: { type: "string" } },
+          },
+          required: ["content"],
+        },
+      },
+      id: {
+        type: "string",
+        description: "Todo id (exact, or an unambiguous prefix) for update/complete/move.",
+      },
+      content: { type: "string", description: "Todo text for add, or replacement text for update." },
+      status: {
+        type: "string",
+        enum: ["pending", "in_progress", "completed", "cancelled"],
+        description: "Status for update.",
+      },
+      priority: {
+        type: "string",
+        enum: ["high", "medium", "low"],
+        description: "Priority for add or update.",
+      },
+      notes: {
+        type: "array",
+        items: { type: "string" },
+        description: "Notes for add, or the replacement notes array for update (empty clears).",
+      },
+      before: {
+        type: "string",
+        description:
+          "For action 'move': insert the item before the todo with this id. Give EXACTLY ONE of before/after/position.",
+      },
+      after: {
+        type: "string",
+        description:
+          "For action 'move': insert the item after the todo with this id. Give EXACTLY ONE of before/after/position.",
+      },
+      position: {
+        type: "number",
+        description: "For action 'move': 0-based target index (clamped). Give EXACTLY ONE of before/after/position.",
+      },
+    },
+    required: ["action"],
+    additionalProperties: false,
+    // The move selector rule, pinned to action 'move'. Without the pin the guard
+    // would reject any non-move call that happened to carry two of those keys,
+    // even though no other action reads them.
+    allOf: [
+      {
+        if: { properties: { action: { const: "move" } }, required: ["action"] },
+        then: {
+          oneOf: [
+            { not: { anyOf: [{ required: ["before"] }, { required: ["after"] }, { required: ["position"] }] } },
+            {
+              oneOf: [{ required: ["before"] }, { required: ["after"] }, { required: ["position"] }],
+              allOf: [
+                { not: { required: ["before", "after"] } },
+                { not: { required: ["before", "position"] } },
+                { not: { required: ["after", "position"] } },
+              ],
+            },
+          ],
+        },
+      },
+    ],
+  }
+}
+
 /** Apply one mutation, purely, to an immutable state and return the next state. */
 export function applyMutation(
   state: TodoListState,
@@ -440,89 +551,8 @@ export default {
     await ctx.tool.transform((editor: any) => {
       editor.add({
         name: "todo",
-        description:
-          "Manage the current session's todo list. Read back the real stored list for this session with action 'list'. " +
-          "Mutations: 'write' (V1 todowrite parity: replace the whole list from `todos`), 'add' (content [status] [priority] [notes]), " +
-          "'update' (id [content] [status] [priority] [notes]), 'complete' (id), 'move' (id plus EXACTLY ONE of before/after/position), 'clear' (wipes the list). " +
-          "'open' lists unfinished todos across ALL sessions. Statuses: pending, in_progress, completed, cancelled. " +
-          "Priorities: high, medium, low. The list persists per session across turns and is not auto-pruned.",
-        input: {
-          type: "object",
-          properties: {
-            action: {
-              type: "string",
-              enum: ["list", "open", "add", "update", "complete", "move", "clear", "write"],
-              description: "What to do with the session todo list.",
-            },
-            todos: {
-              type: "array",
-              description:
-                "Full replacement list for action 'write' (V1 todowrite parity). Each item needs content; " +
-                "id/status/priority/notes are optional (id keeps an existing item's identity and createdAt).",
-              items: {
-                type: "object",
-                properties: {
-                  id: { type: "string" },
-                  content: { type: "string" },
-                  status: { type: "string", enum: ["pending", "in_progress", "completed", "cancelled"] },
-                  priority: { type: "string", enum: ["high", "medium", "low"] },
-                  notes: { type: "array", items: { type: "string" } },
-                },
-                required: ["content"],
-              },
-            },
-            id: {
-              type: "string",
-              description: "Todo id (exact, or an unambiguous prefix) for update/complete/move.",
-            },
-            content: { type: "string", description: "Todo text for add, or replacement text for update." },
-            status: {
-              type: "string",
-              enum: ["pending", "in_progress", "completed", "cancelled"],
-              description: "Status for update.",
-            },
-            priority: {
-              type: "string",
-              enum: ["high", "medium", "low"],
-              description: "Priority for add or update.",
-            },
-            notes: {
-              type: "array",
-              items: { type: "string" },
-              description: "Notes for add, or the replacement notes array for update (empty clears).",
-            },
-            before: {
-              type: "string",
-              description:
-                "For action 'move': insert the item before the todo with this id. Give EXACTLY ONE of before/after/position.",
-            },
-            after: {
-              type: "string",
-              description:
-                "For action 'move': insert the item after the todo with this id. Give EXACTLY ONE of before/after/position.",
-            },
-            position: {
-              type: "number",
-              description: "For action 'move': 0-based target index (clamped). Give EXACTLY ONE of before/after/position.",
-            },
-          },
-          required: ["action"],
-          additionalProperties: false,
-          // Enforce the move rule in the schema too: at most one selector may be
-          // present. (Zero is still allowed here because the action is not pinned
-          // to 'move' at the schema level — the runtime gives the explicit error.)
-          oneOf: [
-            { not: { anyOf: [{ required: ["before"] }, { required: ["after"] }, { required: ["position"] }] } },
-            {
-              oneOf: [{ required: ["before"] }, { required: ["after"] }, { required: ["position"] }],
-              allOf: [
-                { not: { required: ["before", "after"] } },
-                { not: { required: ["before", "position"] } },
-                { not: { required: ["after", "position"] } },
-              ],
-            },
-          ],
-        },
+        description: TODO_TOOL_DESCRIPTION,
+        input: todoToolSchema(),
         options: { codemode: true },
         async execute(input: any, context: any) {
           const request = input as {

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { aggregateOpen, applyMutation, coerce, findTodo, format, formatOpen } from "../index.js"
+import { aggregateOpen, applyMutation, coerce, findTodo, format, formatOpen, todoToolSchema } from "../index.js"
 import { Todo } from "../contract.js"
+import Ajv from "ajv"
 
 const empty = { version: 1 as const, todos: [] as any[] }
 
@@ -284,14 +285,23 @@ describe("move (#2)", () => {
   test("move by position reorders and bumps updatedAt", () => {
     const last = three.todos[2].id
     const before = three.todos[2].updatedAt
-    const { state, summary } = applyMutation(three, { action: "move", id: last, position: 0 })
-    expect(state.todos.map((t) => t.content)).toEqual(["c", "a", "b"])
-    expect(summary).toContain("Moved")
-    expect(summary).toContain("position 0")
-    // The MOVED item's own updatedAt must strictly increase — comparing against a
-    // different item created at the same `now` would pass even if the bump were
-    // removed (the bug this replaces).
-    expect(state.todos[0].updatedAt).toBeGreaterThan(before)
+    // Pin the clock and advance it, so the moved item's own `updatedAt` is
+    // strictly greater than its prior value regardless of how fast the test
+    // runs — a same-millisecond move must still register the bump.
+    const realNow = Date.now
+    Date.now = () => before + 1000
+    try {
+      const { state, summary } = applyMutation(three, { action: "move", id: last, position: 0 })
+      expect(state.todos.map((t) => t.content)).toEqual(["c", "a", "b"])
+      expect(summary).toContain("Moved")
+      expect(summary).toContain("position 0")
+      // The MOVED item's own updatedAt must strictly increase — comparing against a
+      // different item created at the same `now` would pass even if the bump were
+      // removed (the bug this replaces).
+      expect(state.todos[0].updatedAt).toBeGreaterThan(before)
+    } finally {
+      Date.now = realNow
+    }
   })
 
   test("move by before inserts ahead of the target", () => {
@@ -346,8 +356,7 @@ describe("move (#2)", () => {
     expect(state.todos.map((t) => t.content)).toEqual(["a", "b", "c"])
   })
 
-  test("an unknown move id itself changes nothing", () => {
-    const { state, summary } = applyMutation(three, { action: "move", id: "nope", position: 0 })
+  test("an unknown move id itself changes nothing", () => {    const { state, summary } = applyMutation(three, { action: "move", id: "nope", position: 0 })
     expect(summary).toContain("move:")
     expect(state.todos.map((t) => t.content)).toEqual(["a", "b", "c"])
   })
@@ -357,6 +366,35 @@ describe("move (#2)", () => {
     const { state: next, summary } = applyMutation(state, { action: "move", id: "z", before: "abc" })
     expect(summary).toContain("ambiguous")
     expect(next.todos.map((t) => t.content)).toEqual(["a", "b", "c"])
+  })
+})
+
+// #L-a The move selector rule must be scoped to action 'move'. The schema guard
+// is validated directly against the exported schema, so a non-move call carrying
+// stray selector keys is proven to pass (it used to be rejected by the global
+// oneOf), while a valid move and a two-selector move are proven to pass/refuse.
+describe("tool schema move-selector scope", () => {
+  const validate = (() => {
+    const ajv = new Ajv({ allErrors: true })
+    return ajv.compile(todoToolSchema() as object)
+  })()
+
+  test("schema compiles and accepts a valid move with exactly one selector", () => {
+    expect(validate({ action: "move", id: "x", after: "y" })).toBe(true)
+  })
+
+  test("schema refuses a move with two selectors", () => {
+    expect(validate({ action: "move", id: "x", before: "y", after: "z" })).toBe(false)
+  })
+
+  test("schema accepts a non-move action carrying two selector keys", () => {
+    // 'add' never reads before/after/position; the guard must not touch it.
+    expect(validate({ action: "add", content: "hi", before: "a", after: "b" })).toBe(true)
+  })
+
+  test("schema still enforces additionalProperties and required action", () => {
+    expect(validate({ action: "add", content: "hi", nope: 1 })).toBe(false)
+    expect(validate({ content: "hi" })).toBe(false)
   })
 })
 
