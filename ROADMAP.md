@@ -13,6 +13,43 @@ Live ERIS proof on v0.2.3: add+notes, move reorder, H1 refusal, no-op summary, c
 `open` across 5 sessions — all correct. `bun run check` = 70 tests + tsc clean.
 npm 0.2.3; GitHub Release v0.2.3; local plugin 0.2.3.
 
+## v0.3.0 — DONE (2026-10-06)
+
+Three tool-contract tightenings plus the TUI-native sidebar rework. No new tool
+surface, no RPC/contract change.
+
+- **`write` requires `todos`** — a `write` with no `todos` is refused with
+  `write requires todos` and changes nothing; it used to clear the list.
+- **`update` refuses an unknown `status`/`priority`** — an out-of-vocabulary
+  value is refused with the allowed set named and changes nothing, instead of
+  silently defaulting (`add`/`write` still default to `pending`/`medium`).
+- **`open` is deterministically ordered** — priority (`high` → `medium` → `low`)
+  then `updatedAt` descending, so the order is deterministic for a given set of
+  rows; exact (priority, `updatedAt`) ties keep their input order.
+- **Sidebar rework** — single-cell marks (`-` pending, `~` in_progress, `x`
+  completed, `/` cancelled), a one-cell label column plus guaranteed separator
+  before a clipped (28-cell) value, and an ASCII `v`/`>` toggle. `✓` and the
+  U+25BC/U+25B6 triangles are gone; the marks, the toggle, and the ellipsis are
+  single-cell and narrow, and a wide-character content value is clipped at render
+  time so the row cannot wrap.
+- `bun run check` = 87 tests + tsc clean.
+
+### Tier 2/3 items considered for v0.3.0 and rejected (stay saved, not closed)
+
+- **#5 Bulk operations** — needs an ids-array argument and a `--dry-run`
+  surface; a new contract, out of scope for a tightening-only slice.
+- **#6 Status transitions with rules** — advisory transition logic edges toward
+  deciding for the caller; oc-todo stores, never decides.
+- **#7 Export/import** — a new serialization surface and file format; its own slice.
+- **#8 TUI interactivity** — keyboard selection is a much larger TUI surface than
+  the sidebar line rework and was not needed to fix the mark/column bugs.
+- **#9 Storage hygiene** — a manual `prune` is destructive and needs its own
+  design and authorization; never auto-prune.
+- **#10 `list` filters** — an additive query surface not required by any bug here.
+- **#11 RPC parity** — new RPC methods (`todo.counts`, `todo.export`); contract change.
+- **#12 Relative timestamps** — display-only, but the sidebar/`format` slice was
+  scoped to correctness, not new fields.
+
 ## Tier 2 — saved, TBA
 
 - **#5 Bulk operations** — ids-array (`"all"` / `["a","b"]`) for complete/update, plus `--dry-run`.
