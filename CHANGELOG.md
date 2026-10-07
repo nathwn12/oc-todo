@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.1
+
+Packaging-toolchain and documentation corrections. No behaviour change in
+`index.ts` and no change to the tool surface.
+
+- Dev: declare `typescript` in `devDependencies`. `check` runs `tsc --noEmit`,
+  but `typescript` reached `node_modules/.bin` only transitively (a peer of
+  `bun-ffi-structs` under `@opentui/core`), so a lock refresh or a peer-chain
+  change could silently remove `tsc` and break `check.yml` and the release.
+- Docs: the README action table now lists `move` (shipped in 0.2.0) and the
+  `[notes]` argument on `add` / `update` (also shipped in 0.2.0).
+- Docs: `docs/specs/v0.2.0.md` stated the `move` `position` clamps to
+  `[0, length-1]`; the code clamps to `[0, length]`, so a position at or past
+  the end appends to the end. The spec now matches the code and the test.
+- Tests: unchanged at 87.
+
 ## 0.3.0
 
 Tool-contract tightening plus the TUI-native sidebar rework.
