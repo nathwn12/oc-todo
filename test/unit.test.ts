@@ -1,7 +1,17 @@
 import { describe, expect, test } from "bun:test"
-import { aggregateOpen, applyMutation, coerce, findTodo, format, formatOpen, todoToolSchema } from "../index.js"
+import plugin, {
+  aggregateOpen,
+  applyMutation,
+  coerce,
+  findTodo,
+  format,
+  formatOpen,
+  scanSessionRows,
+  TODO_TOOL_DESCRIPTION,
+  todoToolSchema,
+} from "../index.js"
 import { Todo } from "../contract.js"
-import { CONTENT_WIDTH, sidebarLines } from "../tui.js"
+import { CONTENT_WIDTH, refreshedRows, sidebarLines } from "../tui.js"
 import Ajv from "ajv"
 
 const empty = { version: 1 as const, todos: [] as any[] }
@@ -734,11 +744,11 @@ describe("sidebarLines (TUI-native sidebar)", () => {
 
   test("renders the header then one row per item, with exact cell widths", () => {
     expect(expanded.map((line) => line.text)).toEqual([
-      "v Todos 2/4",
-      "- write docs",
-      "~ review pr",
-      "x ship it",
-      "/ scrap it",
+      "\u25BC todos 2/4",
+      "\u25CB write docs",
+      "\u25D0 review pr",
+      "\u25CF ship it",
+      "\u2297 scrap it",
     ])
     expect(expanded.map((line) => Bun.stringWidth(line.text))).toEqual([11, 12, 11, 9, 10])
   })
@@ -769,7 +779,7 @@ describe("sidebarLines (TUI-native sidebar)", () => {
     const marks = ["pending", "in_progress", "completed", "cancelled"].map(
       (status) => sidebarLines([{ id: "a", content: "c", status, priority: "low" }], { expanded: true })[1].text[0],
     )
-    expect(marks).toEqual(["-", "~", "x", "/"])
+    expect(marks).toEqual(["\u25CB", "\u25D0", "\u25CF", "\u2297"])
     expect(new Set(marks).size).toBe(4)
   })
 
@@ -799,28 +809,183 @@ describe("sidebarLines (TUI-native sidebar)", () => {
   test("notes render as a suffix in the value column", () => {
     const withNotes = (notes: string[]) =>
       sidebarLines([{ id: "a", content: "x", status: "pending", priority: "low", notes }], { expanded: true })[1].text
-    expect(withNotes(["one", "two"])).toBe("- x (2 notes)")
-    expect(withNotes(["one"])).toBe("- x (1 note)")
-    expect(withNotes([])).toBe("- x")
+    expect(withNotes(["one", "two"])).toBe("\u25CB x (2 notes)")
+    expect(withNotes(["one"])).toBe("\u25CB x (1 note)")
+    expect(withNotes([])).toBe("\u25CB x")
   })
 
   test("the collapsed and expanded headers share identical column offsets", () => {
     const collapsed = sidebarLines(fixture, { expanded: false })
     expect(collapsed).toHaveLength(1)
-    expect(collapsed[0].text).toBe("> Todos 2/4")
+    expect(collapsed[0].text).toBe("\u25B6 todos 2/4")
     // The toggle is the only difference; the value begins at the same column.
     expect(collapsed[0].text.slice(LABEL_WIDTH)).toBe(expanded[0].text.slice(LABEL_WIDTH))
     expect(collapsed[0].text[LABEL_WIDTH]).toBe(" ")
   })
 
-  test("empty list hides, and a fully closed list auto-collapses without a checkmark", () => {
-    expect(sidebarLines([])).toEqual([])
+  test("empty list renders a one-line muted hint, and a fully closed list auto-collapses without a checkmark", () => {
+    const hint = sidebarLines([])
+    expect(hint).toHaveLength(1)
+    expect(hint[0].muted).toBe(true)
+    expect(hint[0].text[0]).toBe(String.fromCharCode(0x25CB))
     const closedFixture = [
       { id: "1", content: "a", status: "completed", priority: "low" },
       { id: "2", content: "b", status: "cancelled", priority: "low" },
     ]
     const auto = sidebarLines(closedFixture)
     expect(auto).toHaveLength(1)
-    expect(auto[0].text).toBe("> Todos 2/2")
+    expect(auto[0].text).toBe("\u25B6 todos 2/2")
+  })
+})
+
+describe("direct-tool registration (codemode false)", () => {
+  test("the todo tool registers with codemode: false so it is a direct tool", async () => {
+    const added: any[] = []
+    const fakeCtx = {
+      storage: {
+        get: async () => undefined,
+        set: async () => {},
+        scan: async () => ({ entries: [] }),
+      },
+      rpc: {
+        register: async () => ({ events: { emit: async () => {} }, dispose: async () => {} }),
+      },
+      tool: {
+        transform: async (fn: any) => {
+          await fn({
+            add: (tool: any) => added.push(tool),
+            list: () => [],
+            get: () => undefined,
+            namespace: () => {},
+            update: () => {},
+            remove: () => {},
+          })
+        },
+      },
+    }
+    const dispose = await (plugin as any).setup(fakeCtx)
+    try {
+      const todo = added.find((tool) => tool.name === "todo")
+      expect(todo).toBeDefined()
+      expect(todo.options?.codemode).toBe(false)
+    } finally {
+      await dispose()
+    }
+  })
+
+  test("TODO_TOOL_DESCRIPTION begins with the when-clause and its first line fits the catalog limit", () => {
+    expect(TODO_TOOL_DESCRIPTION.startsWith("Use for any multi-step task")).toBe(true)
+    const firstLine = TODO_TOOL_DESCRIPTION.split("\n")[0] ?? ""
+    expect(firstLine.length).toBeLessThanOrEqual(120)
+  })
+
+  test("the action schema tells the model to start with list or write", () => {
+    const schema = todoToolSchema() as any
+    expect(String(schema.properties.action.description)).toContain("list")
+    expect(String(schema.properties.action.description)).toContain("write")
+  })
+
+  test("the empty-state hint is one lowercase single-cell line within the content budget", () => {
+    const hint = sidebarLines([])
+    expect(hint).toHaveLength(1)
+    expect(hint[0].muted).toBe(true)
+    expect(hint[0].text).toBe(hint[0].text.toLowerCase())
+    expect(hint[0].text).not.toContain("\n")
+    for (const char of hint[0].text) {
+      expect(Bun.stringWidth(char)).toBe(1)
+      expect(/\p{Extended_Pictographic}/u.test(char)).toBe(false)
+    }
+    expect(Bun.stringWidth(hint[0].text.slice(1 + 1))).toBeLessThanOrEqual(CONTENT_WIDTH)
+  })
+})
+
+describe("defect fixes (recon round)", () => {
+  test("a wide-character content clips to the cell budget, not the string length", () => {
+    const wide = String.fromCharCode(0x4e2d).repeat(100)
+    const row = sidebarLines([{ id: "a", content: wide, status: "pending", priority: "low" }], {
+      expanded: true,
+    })[1].text
+    const ellipsis = String.fromCharCode(0x2026)
+    expect(row.endsWith(ellipsis)).toBe(true)
+    // 100 chars but 200 cells without width-aware clipping; it must fit.
+    expect(wide.length).toBeGreaterThan(CONTENT_WIDTH)
+    expect(Bun.stringWidth(row.slice(1 + 1))).toBeLessThanOrEqual(CONTENT_WIDTH)
+  })
+
+  test("a failed refresh holds the last good rows", () => {
+    const prev = [
+      { id: "a", content: "keep me", status: "pending", priority: "medium", createdAt: 1, updatedAt: 2 },
+    ] as any[]
+    expect(refreshedRows(prev, { ok: false })).toBe(prev)
+    expect(refreshedRows(prev, { ok: true, todos: [] })).toEqual([])
+    const fresh = [{ id: "b", content: "new", status: "pending", priority: "low", createdAt: 3, updatedAt: 4 }] as any[]
+    expect(refreshedRows(prev, { ok: true, todos: fresh })).toBe(fresh)
+  })
+
+  test("coerce drops empty-string ids that findTodo could never address", () => {
+    const state = coerce({
+      version: 1,
+      todos: [
+        { id: "", content: "ghost" },
+        { id: "ok", content: "real" },
+      ],
+    })
+    expect(state.todos.map((t) => t.id)).toEqual(["ok"])
+  })
+
+  test("update refuses blank content and trims padding like add", () => {
+    const added = applyMutation(empty, { action: "add", content: "a" }).state
+    const blank = applyMutation(added, { action: "update", id: added.todos[0].id, content: "   " })
+    expect(blank.summary).toContain("must not be blank")
+    expect(blank.state.todos[0].content).toBe("a")
+    const padded = applyMutation(added, { action: "update", id: added.todos[0].id, content: "  b  " })
+    expect(padded.state.todos[0].content).toBe("b")
+  })
+
+  test("add never mints an id a planted row already owns", () => {
+    const realNow = Date.now
+    Date.now = () => 1_000_000
+    try {
+      const now36 = (1_000_000).toString(36)
+      // Plant the exact id the next add would mint (timestamp plus length suffix).
+      const planted = applyMutation(empty, {
+        action: "write",
+        todos: [{ content: "first" }, { id: `${now36}3`, content: "planted" }],
+      }).state
+      expect(planted.todos).toHaveLength(2)
+      const { state } = applyMutation(planted, { action: "add", content: "new" })
+      expect(state.todos).toHaveLength(3)
+      expect(new Set(state.todos.map((t) => t.id)).size).toBe(3)
+      // The planted row keeps its identity: an exact edit still hits it alone.
+      const next = applyMutation(state, { action: "update", id: `${now36}3`, status: "completed" }).state
+      expect(next.todos.filter((t) => t.status === "completed").map((t) => t.content)).toEqual(["planted"])
+    } finally {
+      Date.now = realNow
+    }
+  })
+
+  test("scan continues past an empty page when next is present", async () => {
+    const pages = [
+      { entries: [], next: "k2" },
+      { entries: [{ key: "todos/session/s1", value: { version: 1, todos: [] } }] },
+    ]
+    let calls = 0
+    const storage = { scan: async () => pages[Math.min(calls++, pages.length - 1)] }
+    const rows = await scanSessionRows(storage as any)
+    expect(calls).toBe(2)
+    expect(rows.map((row) => row.key)).toEqual(["todos/session/s1"])
+  })
+
+  test("scan still ends when next repeats", async () => {
+    let calls = 0
+    const storage = {
+      scan: async ({ after }: { after?: string }) => {
+        calls++
+        return { entries: [], next: after ?? "k" }
+      },
+    }
+    const rows = await scanSessionRows(storage as any)
+    expect(rows).toEqual([])
+    expect(calls).toBe(2)
   })
 })

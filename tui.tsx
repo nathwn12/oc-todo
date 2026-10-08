@@ -32,23 +32,24 @@ export interface SidebarLine {
 }
 
 /**
- * The four status marks: pending `-`, in_progress `~`, completed `x`,
- * cancelled `/`. Exactly one cell each and all four distinct - the old `[x]`
- * three-cell tokens and the shared `-` for pending/cancelled are both gone.
+ * The four status marks: pending `\u25CB` (U+25CB), in_progress `\u25D0` (U+25D0),
+ * completed `\u25CF` (U+25CF), cancelled `\u2297` (U+2297). Exactly one cell each
+ * and all four distinct - the old `[x]` three-cell tokens and the shared
+ * `-` for pending/cancelled are both gone.
  */
 const STATUS_MARK: Record<string, string> = {
-  pending: "-",
-  in_progress: "~",
-  completed: "x",
-  cancelled: "/",
+  pending: "\u25CB",
+  in_progress: "\u25D0",
+  completed: "\u25CF",
+  cancelled: "\u2297",
 }
 
 /** The mark for an unknown stored status: read it as still pending. */
-const UNKNOWN_MARK = "-"
+const UNKNOWN_MARK = "\u25CB"
 
-/** ASCII toggle marks: `v` expanded, `>` collapsed. Never the U+25BC/U+25B6 triangles. */
-const TOGGLE_EXPANDED = "v"
-const TOGGLE_COLLAPSED = ">"
+/** Toggle marks: `\u25BC` (U+25BC) expanded, `\u25B6` (U+25B6) collapsed - the V1 sidebar set. */
+const TOGGLE_EXPANDED = "\u25BC"
+const TOGGLE_COLLAPSED = "\u25B6"
 
 /**
  * Value-column budget for an item, in cells.
@@ -91,16 +92,65 @@ function formatRow(label: string, value: string, labelWidth: number): string {
 }
 
 /**
+ * The cell width of one code point: wide/CJK and pictographic ranges take two
+ * cells, everything else one. Conservative on purpose - an unknown wide glyph
+ * may clip a cell early, but a row can never overrun the sidebar.
+ */
+function cellWidth(code: number): number {
+  if (code < 0x1100) return 1
+  if (
+    (code >= 0x1100 && code <= 0x115f) ||
+    (code >= 0x2e80 && code <= 0xa4cf) ||
+    (code >= 0xac00 && code <= 0xd7a3) ||
+    (code >= 0xf900 && code <= 0xfaff) ||
+    (code >= 0xfe10 && code <= 0xfe19) ||
+    (code >= 0xfe30 && code <= 0xfe4f) ||
+    (code >= 0xff00 && code <= 0xff60) ||
+    (code >= 0xffe0 && code <= 0xffe6) ||
+    (code >= 0x1f300 && code <= 0x1faff) ||
+    (code >= 0x20000 && code <= 0x3fffd)
+  )
+    return 2
+  return 1
+}
+
+/** Cell width of a whole value: the sum of its code points' cells. */
+function cellCount(text: string): number {
+  let width = 0
+  for (const char of text) width += cellWidth(char.codePointAt(0) ?? 0)
+  return width
+}
+
+/**
  * Shorten a value for the narrow sidebar.
  *
- * Width-aware and surrogate-safe: the ellipsis tells the reader the value was
- * cut rather than being the value, and a surrogate pair is never sliced in half.
+ * Width-aware and code-point-safe: the ellipsis tells the reader the value was
+ * cut rather than being the value, iterating code points (never `slice`) means
+ * a surrogate pair is never split, and the result is at most `max` cells wide
+ * even when wide characters count double.
  */
 function clip(text: string, max: number): string {
-  if (text.length <= max) return text
-  const cut = text.slice(0, Math.max(1, max - 1))
-  const safe = /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut
-  return `${safe}\u2026`
+  if (cellCount(text) <= max) return text
+  const budget = Math.max(1, max - 1)
+  let width = 0
+  let cut = ""
+  for (const char of text) {
+    const next = width + cellWidth(char.codePointAt(0) ?? 0)
+    if (next > budget) break
+    cut += char
+    width = next
+  }
+  if (cut.length === 0) return String.fromCharCode(0x2026)
+  return `${cut}${String.fromCharCode(0x2026)}`
+}
+
+/** The rows a refresh settles on: fresh rows on success, the last good rows on error. */
+export function refreshedRows(
+  previous: TodoItem[],
+  outcome: { ok: true; todos?: TodoItem[] } | { ok: false },
+): TodoItem[] {
+  if (!outcome.ok) return previous
+  return outcome.todos ?? []
 }
 
 /** The compact note count suffix, or the empty string when the item has none. */
@@ -124,7 +174,13 @@ export function sidebarLines(
   todos: readonly TodoItem[],
   opts?: { expanded?: boolean; labelWidth?: number; contentWidth?: number },
 ): SidebarLine[] {
-  if (todos.length === 0) return []
+  if (todos.length === 0) {
+    const labelWidth = opts?.labelWidth ?? LABEL_WIDTH
+    const contentWidth = opts?.contentWidth ?? CONTENT_WIDTH
+    const hint = clip("todo - use the todo tool for multi-step work", contentWidth)
+    // The hint wears the pending mark (U+25CB), consistent with the status marks.
+    return [{ text: formatRow(String.fromCharCode(0x25CB), hint, labelWidth), muted: true }]
+  }
   const labelWidth = opts?.labelWidth ?? LABEL_WIDTH
   const contentWidth = opts?.contentWidth ?? CONTENT_WIDTH
   const total = todos.length
@@ -133,7 +189,7 @@ export function sidebarLines(
 
   const lines: SidebarLine[] = [
     {
-      text: formatRow(expanded ? TOGGLE_EXPANDED : TOGGLE_COLLAPSED, `Todos ${closed}/${total}`, labelWidth),
+      text: formatRow(expanded ? TOGGLE_EXPANDED : TOGGLE_COLLAPSED, `todos ${closed}/${total}`, labelWidth),
       muted: false,
     },
   ]
@@ -167,10 +223,10 @@ export default Plugin.define({
         // `client.rpc` builds a typed subclient from the shared contract.
         const remote = client.rpc(Todo)
         const result = (await remote.list({ sessionID: id })) as { todos?: TodoItem[] }
-        if (seq === requestSeq && sessionID === id) setTodos(result.todos ?? [])
+        if (seq === requestSeq && sessionID === id) setTodos(refreshedRows(todos(), { ok: true, todos: result.todos }))
       } catch {
-        // A failed refresh must never blank a session we have since moved to.
-        if (seq === requestSeq && sessionID === id) setTodos([])
+        // A failed refresh holds the last good rows; only a session switch resets.
+        if (seq === requestSeq && sessionID === id) setTodos(refreshedRows(todos(), { ok: false }))
       }
     }
 
@@ -197,7 +253,7 @@ export default Plugin.define({
         const expanded = () => manual() ?? active().length > 0
         const lines = () => sidebarLines(todos(), { expanded: expanded() })
         return (
-          <Show when={todos().length > 0}>
+          <Show when={lines().length > 0}>
             <box flexDirection="column">
               {/* The header is the click target; it stays visible in both states. */}
               <box flexDirection="row" onMouseUp={() => setManual(!expanded())}>
