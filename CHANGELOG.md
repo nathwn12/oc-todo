@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.4.0
+
+Direct-tool registration plus the V1-style sidebar rework and defect fixes.
+
+- Change: `todo` is registered as a DIRECT tool (`codemode: false`), so the
+  model sees it without the `execute` detour.
+- Change: trigger-first tool description plus an `action` hint, so the first
+  touchpoint names the trigger before the parameters.
+- Sidebar: V1-style glyphs - header `\u25BC`/`\u25B6` toggle and item marks
+  `\u25CB` pending / `\u25D0` in_progress / `\u25CF` completed / `\u2297`
+  cancelled (written here as `\u` escapes, never literals).
+- Sidebar: an empty-state hint row, so an empty list explains itself instead
+  of rendering blank.
+- Fix: width-aware clipping, so a wide-character value cannot wrap the row.
+- Fix: refresh holds last-good rows on error, so a failed refresh never blanks
+  the list.
+- Fix: blank-id drop, `update` trim/blank guard, and `add` id-uniqueness, so
+  malformed or colliding ids cannot corrupt identity/`createdAt`.
+- Fix: `scanSessionRows` follows `next`, so paged session scans reach every
+  row.
+
 ## 0.3.1
 
 Packaging-toolchain and documentation corrections. No behaviour change in
