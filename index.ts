@@ -91,7 +91,7 @@ export function coerce(raw: unknown): TodoListState {
     for (const item of value.todos) {
       if (!item || typeof item !== "object") continue
       const todo = item as Partial<TodoItem>
-      if (typeof todo.id !== "string") continue
+      if (typeof todo.id !== "string" || todo.id === "") continue
       const repaired: TodoItem = {
         id: todo.id,
         content: typeof todo.content === "string" ? todo.content : "",
@@ -127,8 +127,9 @@ async function writeState(
  * Enumerate every stored session todo row through the host storage scan. Pages by
  * `after`/`next`; a page that returns no `next` ends the walk, and a hostile
  * repeating `next` cannot loop forever because each step must advance strictly.
+ * An empty page with a `next` still continues: a sparse backend may return one.
  */
-async function scanSessionRows(
+export async function scanSessionRows(
   storage: { scan(options: { prefix: string; after?: string; limit?: number }): Promise<any> },
 ): Promise<Array<{ key: string; value: unknown }>> {
   const rows: Array<{ key: string; value: unknown }> = []
@@ -138,7 +139,7 @@ async function scanSessionRows(
     const entries: Array<{ key: string; value: unknown }> = Array.isArray(page?.entries) ? page.entries : []
     rows.push(...entries)
     const next = page?.next
-    if (typeof next !== "string" || next === after || entries.length === 0) break
+    if (typeof next !== "string" || next === after) break
     after = next
   }
   return rows
@@ -161,6 +162,7 @@ export function findTodo(todos: TodoItem[], id: string | undefined): { index: nu
 /** The `todo` tool's human/agent-facing description (kept beside the schema so the
  *  move selector rule reads the same in both). */
 export const TODO_TOOL_DESCRIPTION =
+  "Use for any multi-step task to track progress across turns.\n" +
   "Manage the current session's todo list. Read back the real stored list for this session with action 'list'. " +
   "Mutations: 'write' (V1 todowrite parity: replace the whole list from `todos`), 'add' (content [status] [priority] [notes]), " +
   "'update' (id [content] [status] [priority] [notes]), 'complete' (id), " +
@@ -189,7 +191,7 @@ export function todoToolSchema() {
       action: {
         type: "string",
         enum: ["list", "open", "add", "update", "complete", "move", "clear", "write"],
-        description: "What to do with the session todo list.",
+        description: "What to do with the session todo list. Start with 'list' or 'write' for multi-step work.",
       },
       todos: {
         type: "array",
@@ -341,8 +343,20 @@ export function applyMutation(
       if (!content) return { state, summary: "add requires content" }
       const status = isStatus(input.status) ? input.status : "pending"
       const priority = isPriority(input.priority) ? input.priority : "medium"
+      // The mint is timestamp plus length, so a planted row (an explicit `write`
+      // id or a hand-edited store entry) can already own the next mint. Suffix
+      // until the id is unique, mirroring the `write` regeneration. Bounded so a
+      // pathological store cannot spin forever.
+      let id = `${now.toString(36)}${(todos.length + 1).toString(36)}`
+      if (todos.some((todo) => todo.id === id)) {
+        const base = id
+        for (let attempt = 0; todos.some((todo) => todo.id === id); attempt++) {
+          id = `${base}${todos.length.toString(36)}${attempt ? attempt.toString(36) : ""}`
+          if (attempt > 64) break
+        }
+      }
       const item: TodoItem = {
-        id: `${now.toString(36)}${(todos.length + 1).toString(36)}`,
+        id,
         content,
         status,
         priority,
@@ -370,8 +384,10 @@ export function applyMutation(
       let changed = false
       if (input.content !== undefined) {
         if (typeof input.content !== "string") return { state, summary: "update: content must be a string" }
-        if (input.content !== todo.content) {
-          todo.content = input.content
+        const content = input.content.trim()
+        if (!content) return { state, summary: "update: content must not be blank" }
+        if (content !== todo.content) {
+          todo.content = content
           changed = true
         }
       }
@@ -583,7 +599,7 @@ export default {
         name: "todo",
         description: TODO_TOOL_DESCRIPTION,
         input: todoToolSchema(),
-        options: { codemode: true },
+        options: { codemode: false },
         async execute(input: any, context: any) {
           const request = input as {
             action: "list" | "open" | "add" | "update" | "complete" | "move" | "clear" | "write"
