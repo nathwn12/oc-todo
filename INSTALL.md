@@ -13,7 +13,7 @@ Stable default. Use this unless you have a reason not to. Measured working as np
 ## GITHUB - bleeding edge, experimental (MEASURED: WORKS as package spec)
 
 ```jsonc
-{ "plugins": ["oc-todo@git+https://github.com/nathwn12/oc-todo.git#6fdf78abf3ed08f147eea2e0632ba238898c18dc"] }
+{ "plugins": ["oc-todo@git+https://github.com/nathwn12/oc-todo.git#ac48febf140034a3c6b98387f8cfe80700d82e16"] }
 ```
 
 Experimental, unsupported, may be broken. Every commit is installable, so this route carries unreleased changes. Measured working as github PACKAGE spec `"oc-todo@git+https://github.com/nathwn12/oc-todo.git#<full sha>"` (host log shows it loading).
