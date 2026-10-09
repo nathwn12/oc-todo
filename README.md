@@ -20,14 +20,19 @@ Install the oc-todo OpenCode plugin:
 3. Verify: the `todo` tool is available to the agent.
 ```
 
-Add the plugin to your `opencode.jsonc`:
+Add the plugin to your `opencode.jsonc` - stable (npm) or bleeding edge (github):
 
 ```jsonc
-// opencode.jsonc
-{ "plugins": ["oc-todo"] }
+// opencode.jsonc - stable (npm):
+{ "plugins": ["oc-todo@0.4.0"] }
 ```
 
-See [INSTALL.md](./INSTALL.md) for the pinned npm and bleeding-edge git routes.
+```jsonc
+// opencode.jsonc - bleeding edge (github) instead of stable, not in addition:
+{ "plugins": ["oc-todo@git+https://github.com/nathwn12/oc-todo.git#ac48febf140034a3c6b98387f8cfe80700d82e16"] }
+```
+
+See [INSTALL.md](./INSTALL.md) for the three routes: pinned npm, the github package spec, and a no-npm local directory entry.
 
 Restart OpenCode. **That's the whole setup** — no config file, no options. The `todo` tool is available to the agent immediately, and the checklist appears in the sidebar beside an open session whenever that session has todos.
 
