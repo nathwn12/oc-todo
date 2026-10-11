@@ -87,11 +87,17 @@ export function coerce(raw: unknown): TodoListState {
   if (!raw || typeof raw !== "object") return emptyState()
   const value = raw as Partial<TodoListState>
   const todos: TodoItem[] = []
+  const seen = new Set<string>()
   if (Array.isArray(value.todos)) {
     for (const item of value.todos) {
       if (!item || typeof item !== "object") continue
       const todo = item as Partial<TodoItem>
       if (typeof todo.id !== "string" || todo.id === "") continue
+      // A duplicated store row is permanent unless repaired here: keep the
+      // first row owning an id and drop later repeats, so a duplicate reloads
+      // as a single addressable row.
+      if (seen.has(todo.id)) continue
+      seen.add(todo.id)
       const repaired: TodoItem = {
         id: todo.id,
         content: typeof todo.content === "string" ? todo.content : "",
@@ -328,6 +334,13 @@ export function applyMutation(
           id = `${now.toString(36)}${(index + 1).toString(36)}${next.length.toString(36)}${attempt ? attempt.toString(36) : ""}`
           if (attempt > 64) break
         }
+        // The bounded loop above can still hold a colliding id when every
+        // predictable candidate is taken. Escape the predictable space with a
+        // random suffix (reassigned onto the colliding id, so each iteration
+        // differs even with a pinned clock) instead of accepting the collision.
+        while (used.has(id) || ownedByPrevious(id)) {
+          id = `${id}-${now.toString(36)}${Math.random().toString(36).slice(2)}`
+        }
         used.add(id)
         const prior = previous.get(id)
         const item: TodoItem = { id, content, status, priority, createdAt: prior?.createdAt ?? now, updatedAt: now }
@@ -353,6 +366,13 @@ export function applyMutation(
         for (let attempt = 0; todos.some((todo) => todo.id === id); attempt++) {
           id = `${base}${todos.length.toString(36)}${attempt ? attempt.toString(36) : ""}`
           if (attempt > 64) break
+        }
+        // Same escape as `write`: the bounded loop can still hold a colliding
+        // id when every predictable candidate is planted. Suffix randomly off
+        // the colliding id (each iteration differs even with a pinned clock)
+        // instead of minting a duplicate.
+        while (todos.some((todo) => todo.id === id)) {
+          id = `${id}-${now.toString(36)}${Math.random().toString(36).slice(2)}`
         }
       }
       const item: TodoItem = {
@@ -573,24 +593,40 @@ export default {
     const serialize = <T>(sessionID: string, task: () => Promise<T>): Promise<T> => {
       const previous = queues.get(sessionID) ?? Promise.resolve()
       const next = previous.then(task, task)
-      queues.set(
-        sessionID,
-        next.catch(() => {}),
-      )
+      const tracked = next.catch(() => {})
+      queues.set(sessionID, tracked)
+      // A settled entry with no newer task chained is dead weight: every
+      // distinct sessionID would otherwise leak one entry for the process
+      // lifetime. Delete only when this task is still the tail, so a newer
+      // chained task is never unlinked.
+      tracked.then(() => {
+        if (queues.get(sessionID) === tracked) queues.delete(sessionID)
+      })
       return next
     }
 
     const registration = await ctx.rpc.register(Todo, {
-      // The TUI's read path: real stored state.
+      // The TUI's read path: real stored state. A backend ERROR (not corrupt
+      // data, which `coerce` already repairs) degrades to an empty list rather
+      // than failing the read. Writes never catch: a failed read inside a
+      // mutation must fail, not silently overwrite storage from empty state.
       async list(input: { sessionID: string }) {
         const { sessionID } = input
-        const state = await readState(store, sessionID)
-        return { todos: state.todos }
+        try {
+          const state = await readState(store, sessionID)
+          return { todos: state.todos }
+        } catch {
+          return { todos: [] }
+        }
       },
       // Cross-session roll-up. Enumerates every stored session row via the host
       // storage scan, paged by `next`, then aggregates purely.
       async open() {
-        return aggregateOpen(await scanSessionRows(ctx.storage))
+        try {
+          return aggregateOpen(await scanSessionRows(ctx.storage))
+        } catch {
+          return { todos: [] }
+        }
       },
     })
 
@@ -623,13 +659,22 @@ export default {
           const sessionID = String(context.sessionID)
 
           if (request.action === "list") {
-            const state = await readState(store, sessionID)
-            return { content: `${format(state)}\n${state.todos.length} todo(s) for session ${sessionID}.` }
+            try {
+              const state = await readState(store, sessionID)
+              return { content: `${format(state)}\n${state.todos.length} todo(s) for session ${sessionID}.` }
+            } catch {
+              const degraded = emptyState()
+              return { content: `${format(degraded)}\n${degraded.todos.length} todo(s) for session ${sessionID}.` }
+            }
           }
 
           if (request.action === "open") {
-            const { todos } = aggregateOpen(await scanSessionRows(ctx.storage))
-            return { content: formatOpen(todos) }
+            try {
+              const { todos } = aggregateOpen(await scanSessionRows(ctx.storage))
+              return { content: formatOpen(todos) }
+            } catch {
+              return { content: formatOpen([]) }
+            }
           }
 
           const { state, summary } = await serialize(sessionID, async () => {
