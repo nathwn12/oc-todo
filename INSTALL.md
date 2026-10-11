@@ -24,7 +24,7 @@ Experimental, unsupported, may be broken. Every commit is installable, so this r
 { "plugins": ["<path to repo - a local clone of this repository>"] }
 ```
 
-Point the plugin entry at a local clone of this repo (MEASURED: WORKS - host log: `msg="loading plugin" id=<workspace-root>PERSONAL/oc-todo entrypoint=file:///<workspace-root>PERSONAL/oc-todo/index.ts role=server`).
+Point the plugin entry at a local clone of this repo (MEASURED: WORKS - host log: `msg="loading plugin" id=<local-clone-path> entrypoint=file:///<local-clone-path>/index.ts role=server`).
 
 The bare `github:nathwn12/oc-todo@<full sha>` directory form with no `#path` DOES NOT LOAD - measured result, not pending: it produced no load, only `NpmInstallFailedError (cause: Error: An unknown git error occurred)`. Same for the `#` and `#index.ts` variants. Do not use it.
 
