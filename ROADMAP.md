@@ -50,13 +50,30 @@ surface, no RPC/contract change.
 - **#12 Relative timestamps** — display-only, but the sidebar/`format` slice was
   scoped to correctness, not new fields.
 
+## v0.5.0 — DONE (2026-10-11)
+
+The detail-inspector panel (CLI plugin only). No server/contract/storage change.
+
+- **#8 TUI interactivity** (inspection scope, v1) — a read-only `session.panel`
+  inspector opened with `/show-todos`: a selectable list (left, 30% width), the selected
+  item's metadata (top-right, ≤25% height), and its full content + notes wrapped
+  read-only (bottom-right). `up`/`down`/`k`/`j` select, `escape`/`q` close; the
+  optional command argument preselects by 1-based index or id/unique-id-prefix.
+  Current session only; in-place mutation and cross-session mode remain open.
+- The sidebar and the inspector share one data feed (one signal, one
+  `rpc.todo.changed` subscription, one 3s poll fallback).
+- Pure renderers for the panel (`listRows`, `metadataLines`, `proseLines`,
+  `wrapText`, `formatStamp`, `resolveSelection`, selection math, column budgets).
+- `bun run check` = 132 tests + tsc clean.
+
 ## Tier 2 — saved, TBA
 
 - **#5 Bulk operations** — ids-array (`"all"` / `["a","b"]`) for complete/update, plus `--dry-run`.
 - **#6 Status transitions with rules** — explicit `reopen`; advisory warning when moving to
   `in_progress` while a predecessor is open. Never blocking.
 - **#7 Export/import** — markdown checklist + JSON; makes the list portable and git-friendly.
-- **#8 TUI interactivity** — keyboard selection, toggle-complete-in-place, jump-to-item.
+- **#8 TUI interactivity** — the inspector panel shipped (v0.5.0); the
+  toggle-complete-in-place and jump-to-item halves remain saved.
 
 ## Tier 3 — saved, later
 

@@ -12,7 +12,7 @@
 
 ## What it is
 
-oc-todo is an OpenCode plugin that gives every session its own durable todo list. It adds a `todo` tool the agent calls to track multi-step work, backed by real plugin storage rather than ephemeral UI text, plus a read-only checklist rendered in the sidebar beside any open session that has todos.
+oc-todo is an OpenCode plugin that gives every session its own durable todo list. It adds a `todo` tool the agent calls to track multi-step work, backed by real plugin storage rather than ephemeral UI text, plus a read-only checklist rendered in the sidebar beside any open session that has todos. A `/show-todos` inspector panel shows one item's full detail on demand.
 
 ## Why
 
@@ -24,6 +24,7 @@ Agents doing multi-step work need a list that survives across turns and server r
 - Per-session storage under `todos/session/<sessionID>` in the host's SQLite store; survives turns and server restarts.
 - Cross-session `open` view of every unfinished todo, ordered by priority then recency.
 - Read-only sidebar checklist that refreshes on `rpc.todo.changed` with a poll fallback for remote servers.
+- `/show-todos` inspector panel: a keyboard-driven, read-only detail view (list, metadata, full content and notes) for the current session.
 - Optional notes on items and a counts summary line on formatted output.
 - No config file, no options, no network calls, no telemetry.
 
@@ -40,7 +41,7 @@ See [INSTALL.md](INSTALL.md) for the other two routes: the bleeding-edge GitHub 
 
 ## Usage
 
-Ask the agent to track the work with the todo tool, for example: "use the todo tool to track these steps". The checklist appears in the sidebar beside the open session whenever that session has todos; an empty session shows a single hint line instead. Item statuses are `pending`, `in_progress`, `completed`, and `cancelled`; priorities are `high`, `medium`, and `low`. Remove `"oc-todo"` from the `plugins` array and restart OpenCode to uninstall; the stock sidebar returns exactly as it was.
+Ask the agent to track the work with the todo tool, for example: "use the todo tool to track these steps". The checklist appears in the sidebar beside the open session whenever that session has todos; an empty session shows a single hint line instead. Run `/show-todos` to open the inspector panel for the current session - a selectable list on the left and the selected item's metadata and full content (with notes) on the right; `up`/`down` or `k`/`j` move the selection and `escape`/`q` closes it (click the panel first if the keys don't respond - its footer says so). Item statuses are `pending`, `in_progress`, `completed`, and `cancelled`; priorities are `high`, `medium`, and `low`. Remove `"oc-todo"` from the `plugins` array and restart OpenCode to uninstall; the stock sidebar returns exactly as it was.
 
 ## Build from source
 
@@ -58,6 +59,7 @@ bun run check
 ## Docs
 
 - [INSTALL.md](INSTALL.md) — the three install routes (pinned npm, GitHub package spec, local directory entry).
+- [docs/specs/v0.5.0.md](docs/specs/v0.5.0.md) — the inspector panel (layout, keys, pure renderers).
 - [docs/specs/v0.2.0.md](docs/specs/v0.2.0.md) — the Tier 1 slice contract (cross-session list, move, notes, counts).
 - [CHANGELOG.md](CHANGELOG.md) — release history.
 
