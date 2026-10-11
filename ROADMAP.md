@@ -1,7 +1,7 @@
 # oc-todo — roadmap
 
 Owner-approved improvement inventory. Source: IDEA/THINKER pass 2026-10-05.
-Repo: `<workspace-root>PERSONAL\oc-todo` (github.com/nathwn12/oc-todo). Golden baseline: v0.1.2.
+Repo: `oc-todo` (github.com/nathwn12/oc-todo). Golden baseline: v0.1.2.
 
 ## Tier 1 — DONE (v0.2.0 → v0.2.3, released + CERTIFIED GOLDEN 2026-10-05)
 
