@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/icon.svg" width="128" height="128" alt="oc-todo icon" />
+  <img src="assets/icon.svg" width="120" height="120" alt="oc-todo icon" />
 </p>
 <h1 align="center">oc-todo</h1>
 <p align="center"><strong>Per-session todo lists for your OpenCode terminal.</strong></p>

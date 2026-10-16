@@ -1,6 +1,17 @@
 # Changelog
 
-## 0.4.0
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+
+- Nothing yet.
+
+## [0.4.0] - 2026-10-09
 
 Direct-tool registration plus the V1-style sidebar rework and defect fixes.
 
@@ -21,7 +32,7 @@ Direct-tool registration plus the V1-style sidebar rework and defect fixes.
 - Fix: `scanSessionRows` follows `next`, so paged session scans reach every
   row.
 
-## 0.3.1
+## [0.3.1] - 2026-10-07
 
 Packaging-toolchain and documentation corrections. No behaviour change in
 `index.ts` and no change to the tool surface.
@@ -37,7 +48,7 @@ Packaging-toolchain and documentation corrections. No behaviour change in
   the end appends to the end. The spec now matches the code and the test.
 - Tests: unchanged at 87.
 
-## 0.3.0
+## [0.3.0] - 2026-10-06
 
 Tool-contract tightening plus the TUI-native sidebar rework.
 
@@ -59,7 +70,7 @@ Tool-contract tightening plus the TUI-native sidebar rework.
   clipped at render time, so the row cannot wrap.
 - Tests: 70 -> 87 (cell-width assertions for the pure `sidebarLines` renderer).
 
-## 0.2.3
+## [0.2.3] - 2026-10-05
 
 Certification hardening. No feature or contract change.
 
@@ -71,7 +82,7 @@ Certification hardening. No feature or contract change.
   surface `coerce` exists to defend.
 - Tests: 69 -> 70.
 
-## 0.2.2
+## [0.2.2] - 2026-10-05
 
 Post-release review fixes for the 0.2.1 hardening. No feature or contract
 change; correctness and enforcement only.
@@ -93,7 +104,7 @@ change; correctness and enforcement only.
   the code and CHANGELOG.
 - Tests: 65 -> 69.
 
-## 0.2.1
+## [0.2.1] - 2026-10-05
 
 Post-release review fixes. No feature change; hardening only. Behaviour change:
 `move` now refuses more than one selector instead of silently preferring `before`.
@@ -111,7 +122,7 @@ Post-release review fixes. No feature change; hardening only. Behaviour change:
   against its OWN prior `updatedAt` (strict), not a different item.
 - Tests: 61 -> 65.
 
-## 0.2.0
+## [0.2.0] - 2026-10-05
 
 Tier 1 slice. Contract change: item shape, tool schema, and RPC.
 
@@ -129,14 +140,14 @@ Tier 1 slice. Contract change: item shape, tool schema, and RPC.
 - Sidebar: each item shows a compact note count when it has notes.
 - Tests: 32 -> 61.
 
-## 0.1.2
+## [0.1.2] - 2026-10-05
 
 - A no-op `update` is now correctly reported. Re-supplying a todo's current
   content, status, or priority is reported as `nothing to change` and no longer
   bumps `updatedAt`; a field that genuinely differs still updates.
 - Tests: 28 -> 32.
 
-## 0.1.1
+## [0.1.1] - 2026-10-05
 
 - Post-release review pass. No behaviour change for normal use.
 - An ambiguous id prefix is refused with a reason instead of silently editing
@@ -150,7 +161,7 @@ Tier 1 slice. Contract change: item shape, tool schema, and RPC.
   a repeated id; no-op mutations no longer rewrite storage or emit `changed`.
 - Tests: 15 → 28.
 
-## 0.1.0
+## [0.1.0] - 2026-10-05
 
 - Initial release.
 - `todo` tool: `list`, `write` (V1 `todowrite` parity), `add`, `update`,
