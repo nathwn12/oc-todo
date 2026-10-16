@@ -1,3 +1,11 @@
+# COST RULE — private repos run `workflow_dispatch` only. GitHub Actions is
+# FREE on public repos and METERED on private ones (`windows-latest` bills at
+# 2x per minute), so automatic triggers on a private repo burn quota for no
+# public benefit. This template keeps the PUBLIC-facing shape (`push` /
+# `pull_request` / `workflow_dispatch`) — do NOT trim its `on:` block. A repo
+# that is PRIVATE copies the jobs and steps byte-identical and reduces its own
+# copy's `on:` to `workflow_dispatch` only; the full trigger set is restored
+# at the public flip.
 # nathwn12 house CI - stack: node / bun / pnpm (copy to .github/workflows/ci.yml)
 #
 # The install step MUST match the repo's REAL lockfile. `npm ci` fails outright
@@ -44,4 +52,4 @@ jobs:
       - name: Build
         run: npm run build --if-present
       - name: Test
-        run: bun test
+        run: npm test --if-present
