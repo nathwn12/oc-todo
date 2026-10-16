@@ -31,7 +31,7 @@ Agents doing multi-step work need a list that survives across turns and server r
 
 1. Add the plugin to the `plugins` array in your `opencode.jsonc` (stable npm route):
    ```jsonc
-   { "plugins": ["oc-todo@0.4.0"] }
+   { "plugins": ["oc-todo@0.5.0"] }
    ```
 2. Restart OpenCode.
 3. Verify the `todo` tool is available to the agent.

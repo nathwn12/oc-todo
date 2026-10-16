@@ -5,10 +5,10 @@ Three routes. Plugin entries are bare strings in the `plugins` array of `opencod
 ## NPM - stable, slow release (MEASURED: WORKS)
 
 ```jsonc
-{ "plugins": ["oc-todo@0.4.0"] }
+{ "plugins": ["oc-todo@0.5.0"] }
 ```
 
-Stable default. Use this unless you have a reason not to. Measured working as npm version spec `"oc-todo@0.4.0"`.
+Stable default. Use this unless you have a reason not to. Measured working as npm version spec `"oc-todo@0.5.0"`.
 
 ## GITHUB - bleeding edge, experimental (MEASURED: WORKS as package spec)
 
