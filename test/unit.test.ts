@@ -12,6 +12,20 @@ import plugin, {
 } from "../index.js"
 import { Todo } from "../contract.js"
 import { CONTENT_WIDTH, refreshedRows, sidebarLines } from "../tui.js"
+import {
+  clampIndex,
+  detailColumnWidth,
+  formatStamp,
+  inspectorFooter,
+  listColumnWidth,
+  listRows,
+  metadataLines,
+  moveSelection,
+  proseLines,
+  resolveSelection,
+  SELECT_MARK,
+  wrapText,
+} from "../tui.js"
 import Ajv from "ajv"
 
 const empty = { version: 1 as const, todos: [] as any[] }
@@ -987,5 +1001,290 @@ describe("defect fixes (recon round)", () => {
     const rows = await scanSessionRows(storage as any)
     expect(rows).toEqual([])
     expect(calls).toBe(2)
+  })
+})
+
+// v0.5.0: the detail-inspector panel. The layout, the selection math, and the
+// wrapping are pure; the JSX is a thin shell, so everything asserted here is a
+// string/size, never a screenshot.
+describe("inspector panel (v0.5.0)", () => {
+  const fixture = [
+    { id: "1", content: "write docs", status: "pending", priority: "high" },
+    { id: "2", content: "review pr", status: "in_progress", priority: "medium" },
+    { id: "3", content: "ship it", status: "completed", priority: "low" },
+    { id: "4", content: "scrap it", status: "cancelled", priority: "low" },
+  ]
+
+  describe("selection math", () => {
+    test("clampIndex keeps an index in range and is 0 for an empty list", () => {
+      expect(clampIndex(0, 4)).toBe(0)
+      expect(clampIndex(3, 4)).toBe(3)
+      expect(clampIndex(9, 4)).toBe(3)
+      expect(clampIndex(-4, 4)).toBe(0)
+      expect(clampIndex(1.9, 4)).toBe(1)
+      expect(clampIndex(Number.NaN, 4)).toBe(0)
+      expect(clampIndex(Number.POSITIVE_INFINITY, 4)).toBe(0)
+      expect(clampIndex(2, 0)).toBe(0)
+      expect(clampIndex(-1, 0)).toBe(0)
+    })
+
+    test("moveSelection steps and clamps, never wraps", () => {
+      expect(moveSelection(0, 1, 4)).toBe(1)
+      expect(moveSelection(3, 1, 4)).toBe(3)
+      expect(moveSelection(0, -1, 4)).toBe(0)
+      expect(moveSelection(1, -1, 4)).toBe(0)
+      expect(moveSelection(0, 1, 0)).toBe(0)
+    })
+  })
+
+  describe("column budgets", () => {
+    test("split the panel width with a floor for narrow terminals", () => {
+      expect(listColumnWidth(80)).toBe(23)
+      expect(detailColumnWidth(80)).toBe(53)
+      expect(listColumnWidth(0)).toBe(8)
+      expect(detailColumnWidth(0)).toBe(8)
+      expect(listColumnWidth(20)).toBe(8)
+    })
+
+    test("the two columns plus their padding fit an ordinary panel width", () => {
+      for (const width of [20, 40, 80, 200]) {
+        expect(listColumnWidth(width) + detailColumnWidth(width)).toBeLessThanOrEqual(width)
+      }
+    })
+  })
+
+  describe("listRows", () => {
+    test("marks the selected row and leaves a blank gutter on the rest", () => {
+      const rows = listRows(fixture, { selected: 1, width: 40 })
+      expect(rows.map((row) => row.text)).toEqual([
+        " \u25CB write docs",
+        `${SELECT_MARK}\u25D0 review pr`,
+        " \u25CF ship it",
+        " \u2297 scrap it",
+      ])
+      expect(rows.map((row) => row.selected)).toEqual([false, true, false, false])
+    })
+
+    test("marks closed rows muted only", () => {
+      expect(listRows(fixture, { selected: 0, width: 40 }).map((row) => row.muted)).toEqual([
+        false,
+        false,
+        true,
+        true,
+      ])
+    })
+
+    test("clamps an out-of-range selection to the last row", () => {
+      const rows = listRows(fixture, { selected: 99, width: 40 })
+      expect(rows[rows.length - 1].selected).toBe(true)
+      expect(rows.filter((row) => row.selected)).toHaveLength(1)
+    })
+
+    test("is empty for an empty list", () => {
+      expect(listRows([], { selected: 0, width: 40 })).toEqual([])
+    })
+
+    test("clips a long value to the column and never wraps or overruns", () => {
+      const rows = listRows([{ id: "a", content: "x".repeat(100), status: "pending", priority: "low" }], {
+        selected: 0,
+        width: 20,
+      })
+      expect(rows[0].text.endsWith("\u2026")).toBe(true)
+      for (const row of rows) {
+        expect(Bun.stringWidth(row.text)).toBeLessThanOrEqual(20)
+        expect(row.text).not.toContain("\n")
+        for (const char of row.text) expect(Bun.stringWidth(char)).toBe(1)
+      }
+    })
+
+    test("carries the sidebar's notes suffix in the value", () => {
+      const rows = listRows(
+        [{ id: "a", content: "x", status: "pending", priority: "low", notes: ["n1", "n2"] }],
+        { selected: 0, width: 40 },
+      )
+      expect(rows[0].text).toBe("\u25B8\u25CB x (2 notes)")
+    })
+
+    test("the selection mark is a single narrow cell", () => {
+      expect(Bun.stringWidth(SELECT_MARK)).toBe(1)
+      expect(/\p{Extended_Pictographic}/u.test(SELECT_MARK)).toBe(false)
+    })
+  })
+
+  describe("metadataLines", () => {
+    const meta = (label: string, value: string) => `${label.padEnd(8)} ${value}`
+    const todo = {
+      id: "abc",
+      content: "c",
+      status: "pending",
+      priority: "high",
+      notes: ["one", "two"],
+      createdAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_005_000,
+    }
+
+    test("renders a fixed label column with one row per field", () => {
+      expect(metadataLines(todo, { width: 60 })).toEqual([
+        meta("id", "abc"),
+        meta("status", "pending"),
+        meta("priority", "high"),
+        meta("created", "2023-11-14 22:13:20Z"),
+        meta("updated", "2023-11-14 22:13:25Z"),
+        meta("notes", "2 notes"),
+      ])
+    })
+
+    test("every value starts one column past the label column", () => {
+      for (const line of metadataLines(todo, { width: 60 })) {
+        expect(line[8]).toBe(" ")
+        expect(line[9]).not.toBe(" ")
+      }
+    })
+
+    test("counts notes, or says none", () => {
+      const bare = { ...todo, notes: undefined }
+      expect(metadataLines(bare, { width: 60 })[5]).toBe(meta("notes", "none"))
+      expect(metadataLines({ ...todo, notes: ["x"] }, { width: 60 })[5]).toBe(meta("notes", "1 note"))
+    })
+
+    test("an absent or non-finite timestamp reads unknown", () => {
+      expect(metadataLines({ ...todo, createdAt: 0, updatedAt: Number.NaN }, { width: 60 })[3]).toBe(
+        meta("created", "unknown"),
+      )
+      expect(metadataLines({ ...todo, updatedAt: Number.NaN }, { width: 60 })[4]).toBe(meta("updated", "unknown"))
+    })
+
+    test("an empty selection has no rows", () => {
+      expect(metadataLines(undefined, { width: 60 })).toEqual([])
+    })
+
+    test("clips a value to the column and stays single-cell", () => {
+      const lines = metadataLines({ ...todo, id: "z".repeat(100) }, { width: 20 })
+      expect(lines[0].endsWith("\u2026")).toBe(true)
+      for (const line of lines) {
+        expect(Bun.stringWidth(line)).toBeLessThanOrEqual(20)
+        for (const char of line) expect(Bun.stringWidth(char)).toBe(1)
+      }
+    })
+  })
+
+  describe("wrapText", () => {
+    test("wraps on word boundaries within the column", () => {
+      expect(wrapText("a b c d e f", 3)).toEqual(["a b", "c d", "e f"])
+    })
+
+    test("preserves explicit line breaks and blank lines", () => {
+      expect(wrapText("one\n\ntwo", 20)).toEqual(["one", "", "two"])
+    })
+
+    test("hard-breaks a word wider than the column, cell-aware", () => {
+      const wide = String.fromCharCode(0x4e2d).repeat(3)
+      const lines = wrapText(wide, 2)
+      expect(lines).toEqual([String.fromCharCode(0x4e2d), String.fromCharCode(0x4e2d), String.fromCharCode(0x4e2d)])
+      for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(2)
+    })
+
+    test("never splits a surrogate pair", () => {
+      const lines = wrapText(`ab\u{1f600}cd`, 3)
+      for (const line of lines) {
+        expect(line).not.toContain("\ufffd")
+        expect(Bun.stringWidth(line)).toBeLessThanOrEqual(3)
+      }
+    })
+
+    test("an empty string is one empty line", () => {
+      expect(wrapText("", 10)).toEqual([""])
+    })
+  })
+
+  describe("proseLines", () => {
+    const todo = { id: "a", content: "do the thing", status: "pending", priority: "low" }
+
+    test("renders the full content, wrapped", () => {
+      expect(proseLines(todo, { width: 6 })).toEqual(["do the", "thing"])
+    })
+
+    test("appends notes under a blank line, one bullet each", () => {
+      expect(proseLines({ ...todo, notes: ["first", "second"] }, { width: 40 })).toEqual([
+        "do the thing",
+        "",
+        "- first",
+        "- second",
+      ])
+    })
+
+    test("wraps a note that runs past the column", () => {
+      expect(proseLines({ ...todo, content: "x", notes: ["a b c"] }, { width: 5 })).toEqual(["x", "", "- a b", "c"])
+    })
+
+    test("an empty selection has no rows", () => {
+      expect(proseLines(undefined, { width: 20 })).toEqual([])
+    })
+
+    test("every rendered line fits the column and is single-cell", () => {
+      const lines = proseLines(
+        { ...todo, content: "the quick brown fox".repeat(4), notes: ["tail note"] },
+        { width: 12 },
+      )
+      for (const line of lines) {
+        expect(Bun.stringWidth(line)).toBeLessThanOrEqual(12)
+        for (const char of line) expect(Bun.stringWidth(char)).toBe(1)
+      }
+    })
+  })
+
+  describe("formatStamp", () => {
+    test("renders an absolute UTC stamp", () => {
+      expect(formatStamp(1_700_000_000_000)).toBe("2023-11-14 22:13:20Z")
+    })
+
+    test("a missing or non-finite stamp reads unknown", () => {
+      for (const value of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        expect(formatStamp(value)).toBe("unknown")
+      }
+    })
+  })
+
+  describe("resolveSelection (the command argument)", () => {
+    const todos = [
+      { id: "a1", content: "a", status: "pending", priority: "low" },
+      { id: "a2", content: "b", status: "pending", priority: "low" },
+      { id: "z", content: "c", status: "pending", priority: "low" },
+    ]
+
+    test("empty or unresolved selects the first row", () => {
+      expect(resolveSelection(todos, undefined)).toBe(0)
+      expect(resolveSelection(todos, "  ")).toBe(0)
+      expect(resolveSelection(todos, "nope")).toBe(0)
+      expect(resolveSelection(todos, "a")).toBe(0) // ambiguous prefix
+      expect(resolveSelection([], "1")).toBe(0)
+    })
+
+    test("a decimal argument is a 1-based index", () => {
+      expect(resolveSelection(todos, "2")).toBe(1)
+      expect(resolveSelection(todos, "0")).toBe(0)
+      expect(resolveSelection(todos, "99")).toBe(2)
+    })
+
+    test("otherwise an exact id, then a unique prefix", () => {
+      expect(resolveSelection(todos, "z")).toBe(2)
+      expect(resolveSelection(todos, "a2")).toBe(1)
+    })
+  })
+
+  describe("inspectorFooter", () => {
+    test("names the empty session plainly", () => {
+      expect(inspectorFooter(0, 0)).toBe("no todos in this session")
+    })
+
+    test("shows the position, the keys and the mouse when focused", () => {
+      expect(inspectorFooter(3, 1, true)).toBe("2/3 \u00B7 up/down select \u00B7 click a row \u00B7 esc close")
+      for (const char of inspectorFooter(3, 2, true)) expect(Bun.stringWidth(char)).toBe(1)
+    })
+
+    test("tells an unfocused panel to click first, since its keys are dead until then", () => {
+      expect(inspectorFooter(3, 1, false)).toBe("2/3 \u00B7 click to focus first \u00B7 esc close")
+      for (const char of inspectorFooter(3, 2, false)) expect(Bun.stringWidth(char)).toBe(1)
+    })
   })
 })
