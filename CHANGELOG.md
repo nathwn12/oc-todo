@@ -5,11 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-10-16
 
-### Added
+New user-facing feature: the `/show-todos` inspector panel, plus the house
+brand shape pass and host dependency pins.
 
-- Nothing yet.
+- Added: `/show-todos` inspector panel (`session.panel`, contributed by
+  `knightb8` in PR #2) - a read-only inspector for the current session with
+  a selectable list, bounded metadata, and the selected item's full content
+  plus notes. Specified in `docs/specs/v0.5.0.md` with unit tests for the
+  pure renderers (tests: 98 -> 133).
+- Change: house brand shape pass (README skeleton, icon and signature
+  assets, verbatim house LICENSE).
+- Pins: host `@opencode/plugin` `2.0.30`, `@opentui/*` peers `>=0.5.17`.
 
 ## [0.4.0] - 2026-10-09
 
