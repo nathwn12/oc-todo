@@ -99,7 +99,7 @@ See [docs/specs/v0.5.0.md](docs/specs/v0.5.0.md) for the inspector layout, keys,
 
 ## Testing
 
-- `bun test` runs the suite alone (132 tests at v0.5.0, covering mutations, formatting, and the panel's pure renderers).
+- `bun test` runs the suite alone (133 tests at v0.5.0, covering mutations, formatting, and the panel's pure renderers).
 - `bun run check` runs the test suite plus `tsc --noEmit`; `prepublishOnly` runs the same check before publish, so a broken type or test can never be published.
 
 ## Contributing
